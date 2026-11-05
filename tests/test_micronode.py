@@ -70,6 +70,40 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(result.inputs[1].hash_before, AFTER[0])
 
 
+# Machine hash after each input, as the rollups-node a13 recorded it for the tester app on a
+# live stack (cartesi_listInputs, 2026-11-05). The micronode run below matched all eight.
+TESTER_NODE = [
+    ("rx-accepted", "0x660d8a75f21c7c9cf9a4fa94a704595b49c9306cdb2b389ad27fc505472a85d7"),
+    ("rx-rejected", "0x660d8a75f21c7c9cf9a4fa94a704595b49c9306cdb2b389ad27fc505472a85d7"),
+    ("rx-accepted", "0xb6493d23f666ca3752a57b77c30721207ce986f55738626c158f025a934fc64f"),
+    ("rx-accepted", "0x64cbc97dacc9788d839dc70d3b4a7b34c89658b267fb8ace9d8340d4690b4a75"),
+    ("rx-accepted", "0xcf6316a5f50112c393fe208aa1b165e8e5c2f02c55f78db181f089b2ecf936c4"),
+    ("rx-rejected", "0xcf6316a5f50112c393fe208aa1b165e8e5c2f02c55f78db181f089b2ecf936c4"),
+    ("rx-accepted", "0xaffaec366e8c750d54462076e6b3e37d22dadccb79433ddbcc85631c2f48434b"),
+    ("tx-exception", "0x50932078906dd63d320d48538e9edf13c39f8bafe292bdbcaab2844f513df2b2"),
+]
+
+
+class TesterLogTest(unittest.TestCase):
+    """emulator 0.21 log with rejected inputs and a final exception."""
+
+    def test_matches_node(self):
+        result = parse_run_log((FIXTURES / "run-tester-8-inputs.log").read_text())
+        self.assertEqual([(i.outcome, i.hash_after) for i in result.inputs], TESTER_NODE)
+
+    def test_rejected_input_reverts(self):
+        result = parse_run_log((FIXTURES / "run-tester-8-inputs.log").read_text())
+        self.assertEqual(result.inputs[1].hash_after, result.inputs[1].hash_before)
+
+
+class CliArgsTest(unittest.TestCase):
+    def test_range_keys_by_version(self):
+        from micronode.machine import _cli_args
+
+        self.assertIn("input_file_index_begin:0", _cli_args(0, 3, "/t", True)[3])
+        self.assertIn("input_index_end:3", _cli_args(0, 3, "/t", True, legacy=True)[3])
+
+
 class FakeNode(BaseHTTPRequestHandler):
     hashes: list = []
 

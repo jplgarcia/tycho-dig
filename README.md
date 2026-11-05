@@ -60,9 +60,30 @@ scripts/make-echo-template.sh linux.bin rootfs-tools.ext2 work/echo-template
 ## Notes
 
 - **Matching versions:** the template must have been stored by the same emulator version as `--image` (default `cartesi/machine-emulator:0.22.0`). A 0.21 template fails to load on 0.22 with `expected "archive_version" 8 (got 7)`.
-- **Which hash is compared:** the CLI prints two hashes before input N: the boundary state, and the state with the input loaded. The state after input N is the boundary hash of input N+1, or `--final-hash` for the last input. The node records `GetRootHash` right after each advance (rollups-node `pkg/machine`), which should be the same state. This is inferred from the code and not yet checked against a running node.
+- **Which hash is compared:** the CLI prints two hashes before input N: the boundary state, and the state with the input loaded. The state after input N is the boundary hash of input N+1, or `--final-hash` for the last input. The node records `GetRootHash` right after each advance (rollups-node `pkg/machine`), which is the same state. For a rejected input, both sides record the reverted state.
+- **Emulator versions:** both 0.21 and 0.22 work. The two releases name the input range differently (`input_index_*` in 0.21, `input_file_index_*` in 0.22), and `run` detects which one the CLI accepts. Any image with `cartesi-machine` on its PATH can be used, including the rollups-node image: `--image ghcr.io/cartesi/rollups-node:<tag>`.
 - **Replay range:** every run replays from input 0. Resuming from a stored snapshot is not implemented yet.
 - **Reverts:** the machine runs with `--remote-spawn` because the CLI's default revert mode forks a remote machine to undo rejected inputs.
+
+## Checked against a live rollups-node (2026-11-05)
+
+The setup was a devnet stack with rollups-node `v2.0.0-alpha.13` (Go node, PRT mode) and the tester app (emulator 0.21). Eight inputs went straight to the InputBox:
+
+- notices;
+- invalid JSON (rejected);
+- reports;
+- mixed outputs;
+- an ERC-20 withdrawal voucher;
+- a portal deposit (rejected by the app);
+- large notices;
+- `force_exception`.
+
+`micronode check` read the inputs from the chain, not from the node. It matched the node's `machine_hash` on all eight inputs, including the rejected ones and the final `EXCEPTION`.
+
+Two negative controls each fired at the right input and exited with 2:
+
+- **One payload byte changed on the micronode side:** the first divergence was at that input, and every later input diverged too.
+- **The node's recorded `machine_hash` for one input forced to a wrong value in its Postgres:** the divergence was at that input only. The node protects completed results with a trigger (`completed input result is immutable`), so the trigger had to be disabled for the test.
 
 ## Tests
 

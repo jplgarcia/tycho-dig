@@ -77,12 +77,14 @@ def parse_run_log(text: str) -> RunResult:
     return result
 
 
-def _cli_args(begin: int, end: int, template: str, final_hash: bool) -> list[str]:
+def _cli_args(begin: int, end: int, template: str, final_hash: bool, legacy: bool = False) -> list[str]:
+    # emulator 0.21 names the range input_index_begin/end; 0.22 input_file_index_begin/end
+    key = "input_index" if legacy else "input_file_index"
     advance = ",".join(
         [
             "input:input-%i.bin",
-            f"input_file_index_begin:{begin}",
-            f"input_file_index_end:{end}",
+            f"{key}_begin:{begin}",
+            f"{key}_end:{end}",
             "print_input_state_hashes",
             "outputs_merkle_root:root-%i.bin",
             "output:out-%i-%o.bin",
@@ -100,6 +102,13 @@ def _cli_args(begin: int, end: int, template: str, final_hash: bool) -> list[str
     if final_hash:
         args.append("--final-hash")
     return args
+
+
+def _is_legacy(prefix: list[str]) -> bool:
+    """True when the CLI predates input_file_index_* (emulator <= 0.21)."""
+    proc = subprocess.run([*prefix, "--help"], capture_output=True, text=True)
+    help_text = proc.stdout + proc.stderr
+    return "input_file_index_begin" not in help_text and "input_index_begin" in help_text
 
 
 def run(
@@ -121,25 +130,32 @@ def run(
         exe = shutil.which("cartesi-machine")
         if not exe:
             raise RuntimeError("cartesi-machine is not on PATH (drop --native to use Docker)")
-        cmd = [exe, *_cli_args(begin, end, str(template), True)]
+        legacy = _is_legacy([exe])
+        cmd = [exe, *_cli_args(begin, end, str(template), True, legacy)]
         cwd = str(workdir)
     else:
+        legacy = _is_legacy(["docker", "run", "--rm", "--entrypoint", "cartesi-machine", image])
         cmd = [
             "docker", "run", "--rm",
             "-v", f"{template}:/template:ro",
             "-v", f"{workdir}:/work",
             "-w", "/work",
             "--user", f"{os.getuid()}:{os.getgid()}",
+            # any image with cartesi-machine on PATH works (e.g. the rollups-node image)
+            "--entrypoint", "cartesi-machine",
             image,
-            "cartesi-machine",
-            *_cli_args(begin, end, "/template", True),
+            *_cli_args(begin, end, "/template", True, legacy),
         ]
         cwd = None
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    # the application may print arbitrary bytes to the console
+    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
     text = proc.stdout + proc.stderr
-    if proc.returncode != 0:
-        raise RuntimeError(f"cartesi-machine failed (exit {proc.returncode}):\n{text[-3000:]}")
     result = parse_run_log(text)
+    # An input that raises an exception is terminal: the CLI stops there and exits 1.
+    # That is an outcome to compare, not a failure of the run.
+    ended_in_exception = bool(result.inputs) and result.inputs[-1].outcome == "tx-exception"
+    if proc.returncode != 0 and not ended_in_exception:
+        raise RuntimeError(f"cartesi-machine failed (exit {proc.returncode}):\n{text[-3000:]}")
     for item in result.inputs:
         root = workdir / f"root-{item.index}.bin"
         if root.exists():
