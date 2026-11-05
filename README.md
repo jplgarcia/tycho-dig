@@ -98,6 +98,17 @@ The micronode raised the alarm about 9 minutes 40 seconds earlier, as soon as th
 
 In the control run (`NODE_DEFAULT_BLOCK=finalized`, the same reorg), the node kept input B and epoch 1 was accepted. The micronode was polled every 20 s for about 13 minutes and agreed with the node in every round, so the reorg raised no false alarm.
 
+### Node restarts
+
+The setup was the tester app on rollups-node alpha.13, with snapshot policy `NONE` (the default). The micronode agreed with the node after every restart, which shows the node came back with the right state. The node's logs do not show that, because they do not record the replay.
+
+| Case | What the node did | Micronode |
+|---|---|---|
+| `docker restart` of the advancer between inputs | reloaded the template, replayed, and processed the inputs that were waiting | 7/7 agree |
+| `SIGKILL` while a 4.8 MB input was being processed | left the input with status `NONE` (no partial result), reloaded the template, and processed it again | 14/14 agree |
+
+With `EVERY_INPUT`, the advancer could not write the snapshot, because the test stack points `CARTESI_SNAPSHOTS_DIR` at the read-only template mount. It destroyed the runtime, set the app to `FAILED`, and processed nothing more until an operator ran `cartesi-rollups-cli app status app enabled`. That command asks the operator to "verify snapshot/database consistency" first. `micronode compare` does that check: it confirmed the processed inputs before re-enabling, and after recovery all inputs agreed. While the app was stopped, though, the micronode only reported "not yet processed". It has no alarm yet for a node that stops making progress.
+
 ## Tests
 
 ```bash
