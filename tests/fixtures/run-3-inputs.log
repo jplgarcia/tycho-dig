@@ -1,0 +1,17 @@
+advance with index 0
+advance with index 1
+advance with index 2
+Manual yield rx-accepted (1) (0x000020 data)
+Before input 0
+53213248: 0xe9277f5f7dd7bc6b758dded1887ee46d19781457ff3205fe68e605f8673b8ebc
+53213248: 0xbaa5599c0175acd51c3465d92b8b711bf09f7aac94444fbf755b63ae746e315f
+Manual yield rx-accepted (1) (0x000020 data)
+Before input 1
+55437352: 0x9e84d706fe69b465aaf0c0e8ab77ffcfff40d18b41377adb036678ae2609c83a
+55437352: 0x80c5dd7fe95a237932aba0e9ccb2133e97e7b7b0f63b859da00c6e48e069bad1
+Manual yield rx-accepted (1) (0x000020 data)
+Before input 2
+57696105: 0x82f632d93097b4b7aa49716962cbd2839b287f5c9428903ff56eac1847930164
+57696105: 0xabac55cfd3334579e1d3e3a8cfd3182634e3ec3e9a3629be6b8cdd225a36b60a
+Manual yield rx-accepted (1) (0x000020 data)
+59920778: 0xee31c1fe65b347792f829386dde5941a5d4f04aaafa91845f69007406d9a644d

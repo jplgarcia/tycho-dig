@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "micronode"
+version = "0.1.0"
+description = "Replay Cartesi Rollups inputs on a bare machine and compare per-input hashes with a node"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+micronode = "micronode.cli:main"
+
+[tool.setuptools]
+packages = ["micronode"]
