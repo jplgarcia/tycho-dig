@@ -26,16 +26,17 @@ def fetch_inputs(
     inputbox: str,
     app: str,
     from_block: int,
-    to_block: int | None = None,
+    to_block: int | str = "finalized",
     chunk: int = 10_000,
 ) -> Iterator[ChainInput]:
     """Yield every InputAdded(app, ...) from the InputBox, in index order.
 
     Reads the chain directly, without going through any node, so a node that
     skipped, reordered or altered an input does not affect what we replay.
+    ``to_block`` defaults to the finalized block: reading below finality would
+    make the micronode itself raise false alarms on a reorg.
     """
-    if to_block is None:
-        to_block = int(rpc.call(eth_rpc, "eth_blockNumber", []), 16)
+    to_block = resolve_block(eth_rpc, to_block)
     start = from_block
     while start <= to_block:
         end = min(start + chunk - 1, to_block)
@@ -62,6 +63,18 @@ def fetch_inputs(
                 transaction_hash=log["transactionHash"],
             )
         start = end + 1
+
+
+def resolve_block(eth_rpc: str, block: int | str) -> int:
+    """A block number, or a tag (finalized, safe, latest) resolved to its number."""
+    if isinstance(block, int):
+        return block
+    if block.isdigit() or block.startswith("0x"):
+        return int(block, 0)
+    head = rpc.call(eth_rpc, "eth_getBlockByNumber", [block, False])
+    if head is None:
+        raise RuntimeError(f"the RPC has no {block!r} block")
+    return int(head["number"], 16)
 
 
 def node_application(node_rpc: str, app: str) -> dict:

@@ -101,7 +101,7 @@ def do_fetch(args, workdir: Path) -> int:
             {"index": item.index, "block_number": item.block_number, "transaction_hash": item.transaction_hash}
         )
     (workdir / FETCH_FILE).write_text(json.dumps({"app": app, "inputbox": inputbox, "inputs": manifest}, indent=2))
-    print(f"fetched {len(manifest)} inputs of {app} from InputBox {inputbox} into {workdir}")
+    print(f"fetched {len(manifest)} inputs of {app} from InputBox {inputbox} up to block {args.to_block} into {workdir}")
     return len(manifest)
 
 
@@ -223,7 +223,11 @@ def _add_fetch(p) -> None:
     p.add_argument("--app", required=True, help="application address (or name, with --node)")
     p.add_argument("--inputbox", help="InputBox address (taken from --node when omitted)")
     p.add_argument("--from-block", type=_int, help="first block to scan (default: the app's InputBox block)")
-    p.add_argument("--to-block", type=_int, help="last block to scan (default: latest)")
+    p.add_argument(
+        "--to-block",
+        default="finalized",
+        help="last block to scan: a number or finalized/safe/latest (default: %(default)s)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

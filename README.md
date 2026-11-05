@@ -43,7 +43,7 @@ micronode check --dir work \
 
 `check` runs three steps:
 
-1. **fetch:** reads `InputAdded` from the InputBox, writing each input's raw bytes, which are already EvmAdvance-encoded.
+1. **fetch:** reads `InputAdded` from the InputBox up to the `finalized` block by default (`--to-block` accepts a number or a tag), writing each input's raw bytes, which are already EvmAdvance-encoded. Reading below finality would make the micronode itself raise false alarms on reorgs.
 2. **run:** replays the inputs from the template.
 3. **compare:** compares the per-input hashes with the `machine_hash` that `cartesi_listInputs` returns.
 
@@ -84,6 +84,17 @@ Two negative controls each fired at the right input and exited with 2:
 
 - **One payload byte changed on the micronode side:** the first divergence was at that input, and every later input diverged too.
 - **The node's recorded `machine_hash` for one input forced to a wrong value in its Postgres:** the divergence was at that input only. The node protects completed results with a trigger (`completed input result is immutable`), so the trigger had to be disabled for the test.
+
+### Reorg below finality (F-10, A13-03)
+
+This scenario reproduces a known finding. The node was configured to read the chain at `latest`, which is not the default and is documented as unsafe. An `evm_revert` replaced input 0 (payload `0x41414141`, "A") with another input at the same index (`0x42424242`, "B"). The node kept the orphaned input A and claimed with it. The micronode reads the InputBox only up to `finalized`, so it replayed the canonical input B.
+
+| Time | Event |
+|---|---|
+| 15:55:38 | Input B is finalized. The micronode reports a divergence at input 0. |
+| 16:05:20 | The node marks the app `DIVERGED` ("inconsistent commitment between off-chain and on-chain"). |
+
+The micronode raised the alarm about 9 minutes 40 seconds earlier, as soon as the input was final. Before that it raised nothing, because the inputs it reads are only the final ones.
 
 ## Tests
 
