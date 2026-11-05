@@ -185,7 +185,10 @@ def cmd_compare(args) -> int:
 
 def cmd_check(args) -> int:
     workdir = Path(args.dir)
-    do_fetch(args, workdir)
+    if do_fetch(args, workdir) == 0:
+        # nothing final yet is a normal state for a watcher, not an error
+        print(f"no inputs up to block {args.to_block} yet; nothing to compare")
+        return 0
     result = do_run(args, workdir)
     _print_run(result)
     return do_compare(args.node, args.app, workdir)

@@ -96,6 +96,8 @@ This scenario reproduces a known finding. The node was configured to read the ch
 
 The micronode raised the alarm about 9 minutes 40 seconds earlier, as soon as the input was final. Before that it raised nothing, because the inputs it reads are only the final ones.
 
+In the control run (`NODE_DEFAULT_BLOCK=finalized`, the same reorg), the node kept input B and epoch 1 was accepted. The micronode was polled every 20 s for about 13 minutes and agreed with the node in every round, so the reorg raised no false alarm.
+
 ## Tests
 
 ```bash
