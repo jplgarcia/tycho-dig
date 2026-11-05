@@ -106,16 +106,18 @@ class CliArgsTest(unittest.TestCase):
 
 class FakeNode(BaseHTTPRequestHandler):
     hashes: list = []
+    app: dict = {}
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         params = req["params"]
-        items = [{"index": hex(i), "machine_hash": h} for i, h in enumerate(self.hashes)]
-        page = items[params["offset"] : params["offset"] + params["limit"]]
-        body = json.dumps(
-            {"jsonrpc": "2.0", "id": req["id"],
-             "result": {"data": page, "pagination": {"total_count": len(items), "limit": params["limit"], "offset": params["offset"]}}}
-        ).encode()
+        if req["method"] == "cartesi_getApplication":
+            result = {"data": {"status": "OK", "enabled": True, "reason": None, **self.app}}
+        else:
+            items = [{"index": hex(i), "machine_hash": h} for i, h in enumerate(self.hashes)]
+            page = items[params["offset"] : params["offset"] + params["limit"]]
+            result = {"data": page, "pagination": {"total_count": len(items), "limit": params["limit"], "offset": params["offset"]}}
+        body = json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": result}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -127,14 +129,17 @@ class FakeNode(BaseHTTPRequestHandler):
 
 
 class CompareTest(unittest.TestCase):
-    def _compare(self, node_hashes):
+    def _compare(self, node_hashes, app=None, manifest=None):
         FakeNode.hashes = node_hashes
+        FakeNode.app = app or {}
         server = HTTPServer(("127.0.0.1", 0), FakeNode)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 run = {"inputs": [{"index": i, "hash_after": h} for i, h in enumerate(AFTER)]}
                 Path(tmp, cli.RUN_FILE).write_text(json.dumps(run))
+                if manifest is not None:
+                    Path(tmp, cli.FETCH_FILE).write_text(json.dumps(manifest))
                 out = StringIO()
                 with redirect_stdout(out):
                     code = cli.do_compare(f"http://127.0.0.1:{server.server_port}", "app", Path(tmp))
@@ -152,6 +157,34 @@ class CompareTest(unittest.TestCase):
         code, out = self._compare(bad)
         self.assertEqual(code, 2)
         self.assertIn("first at input 1", out)
+
+    def test_app_failed(self):
+        code, out = self._compare(AFTER[:2] + [None], app={"status": "FAILED", "reason": "could not store\nthe machine"})
+        self.assertEqual(code, 3, out)
+        self.assertIn("PROGRESS ALARM: app status is FAILED: could not store | the machine", out)
+
+    def test_app_disabled(self):
+        code, out = self._compare(AFTER, app={"enabled": False})
+        self.assertEqual(code, 3, out)
+        self.assertIn("disabled", out)
+
+    def test_divergence_wins_over_progress(self):
+        code, out = self._compare(["0x" + "ab" * 32] + AFTER[1:], app={"status": "DIVERGED"})
+        self.assertEqual(code, 2)
+        self.assertIn("PROGRESS ALARM: app status is DIVERGED", out)
+
+    def _manifest(self, to_block):
+        return {"to_block": to_block, "inputs": [{"index": i, "block_number": 100 + i} for i in range(3)]}
+
+    def test_lag_over_limit(self):
+        # input 2 sits in block 102; the finalized head is 130: 28 blocks > 25
+        code, out = self._compare(AFTER[:2] + [None], manifest=self._manifest(130))
+        self.assertEqual(code, 3, out)
+        self.assertIn("input 2 has been final for 28 blocks", out)
+
+    def test_lag_within_limit(self):
+        code, out = self._compare(AFTER[:2] + [None], manifest=self._manifest(120))
+        self.assertEqual(code, 0, out)
 
     def test_node_behind(self):
         code, out = self._compare(AFTER[:2] + [None])

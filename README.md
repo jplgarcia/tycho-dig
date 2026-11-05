@@ -47,7 +47,24 @@ micronode check --dir work \
 2. **run:** replays the inputs from the template.
 3. **compare:** compares the per-input hashes with the `machine_hash` that `cartesi_listInputs` returns.
 
-It exits with 2 at the first divergent input. You can also run `fetch`, `run` and `compare` separately.
+You can also run `fetch`, `run` and `compare` separately.
+
+### Exit codes and alarms
+
+`check` and `compare` exit with one of three codes:
+
+| Exit | Meaning |
+|---|---|
+| 0 | All is well. |
+| 2 | **Divergence:** the first input where the node's hash differs from the micronode's. |
+| 3 | **Progress alarm:** the node stopped working on the app. |
+
+A progress alarm (`PROGRESS ALARM: ...`) fires in two cases:
+
+- **The app is stopped in the node:** its `status` is anything but `OK` (`FAILED`, `DIVERGED`, `CORRUPTED`, `GUEST_EXCEPTION`, ...), or it is disabled. `FAILED` needs an operator; the others are terminal.
+- **The node is behind:** a finalized input is still unprocessed more than `--max-lag-blocks` blocks after the finalized head (default 25; a negative value disables the check). This catches a node that died or hangs while its status still says `OK`.
+
+Both checks are stateless, so `check` can run from cron or a loop without keeping anything between runs. When both fire, the divergence decides the exit code.
 
 ## Test template
 
@@ -107,7 +124,12 @@ The setup was the tester app on rollups-node alpha.13, with snapshot policy `NON
 | `docker restart` of the advancer between inputs | reloaded the template, replayed, and processed the inputs that were waiting | 7/7 agree |
 | `SIGKILL` while a 4.8 MB input was being processed | left the input with status `NONE` (no partial result), reloaded the template, and processed it again | 14/14 agree |
 
-With `EVERY_INPUT`, the advancer could not write the snapshot, because the test stack points `CARTESI_SNAPSHOTS_DIR` at the read-only template mount. It destroyed the runtime, set the app to `FAILED`, and processed nothing more until an operator ran `cartesi-rollups-cli app status app enabled`. That command asks the operator to "verify snapshot/database consistency" first. `micronode compare` does that check: it confirmed the processed inputs before re-enabling, and after recovery all inputs agreed. While the app was stopped, though, the micronode only reported "not yet processed". It has no alarm yet for a node that stops making progress.
+With `EVERY_INPUT`, the advancer could not write the snapshot, because the test stack points `CARTESI_SNAPSHOTS_DIR` at the read-only template mount. It destroyed the runtime, set the app to `FAILED`, and processed nothing more until an operator ran `cartesi-rollups-cli app status app enabled`. That command asks the operator to "verify snapshot/database consistency" first. `micronode compare` does that check: it confirmed the processed inputs before re-enabling, and after recovery all inputs agreed. The progress alarm (exit 3) now catches both stalls:
+
+- a `FAILED` app, at once, from its status;
+- a stopped advancer whose status still said `OK`, after the lag limit. One input was final for 33 blocks against a limit of 25.
+
+After recovery, `check` exits with 0 again.
 
 ## Tests
 

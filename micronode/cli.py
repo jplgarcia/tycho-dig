@@ -4,7 +4,10 @@
     micronode fetch   read the inputs of an application from the InputBox
     micronode run     replay input files from the template, print per-input hashes
     micronode compare compare a run with the machine hashes a rollups-node recorded
-    micronode check   fetch + run + compare in one go (exit 2 on divergence)
+    micronode check   fetch + run + compare in one go
+
+Exit codes of compare/check: 0 all well, 2 divergence, 3 the node stopped making
+progress (app status not OK, disabled, or a finalized input left unprocessed).
 """
 
 from __future__ import annotations
@@ -93,15 +96,18 @@ def _resolve_app(args) -> tuple[str, str, int]:
 
 def do_fetch(args, workdir: Path) -> int:
     app, inputbox, from_block = _resolve_app(args)
+    to_block = chain.resolve_block(args.rpc, args.to_block)
     workdir.mkdir(parents=True, exist_ok=True)
     manifest = []
-    for item in chain.fetch_inputs(args.rpc, inputbox, app, from_block, args.to_block):
+    for item in chain.fetch_inputs(args.rpc, inputbox, app, from_block, to_block):
         (workdir / f"input-{item.index}.bin").write_bytes(item.raw)
         manifest.append(
             {"index": item.index, "block_number": item.block_number, "transaction_hash": item.transaction_hash}
         )
-    (workdir / FETCH_FILE).write_text(json.dumps({"app": app, "inputbox": inputbox, "inputs": manifest}, indent=2))
-    print(f"fetched {len(manifest)} inputs of {app} from InputBox {inputbox} up to block {args.to_block} into {workdir}")
+    (workdir / FETCH_FILE).write_text(
+        json.dumps({"app": app, "inputbox": inputbox, "to_block": to_block, "inputs": manifest}, indent=2)
+    )
+    print(f"fetched {len(manifest)} inputs of {app} from InputBox {inputbox} up to block {to_block} ({args.to_block})")
     return len(manifest)
 
 
@@ -149,10 +155,56 @@ def cmd_run(args) -> int:
 # --- compare -------------------------------------------------------------
 
 
-def do_compare(node_rpc: str, app: str, workdir: Path) -> int:
+DEFAULT_MAX_LAG_BLOCKS = 25
+
+
+def status_alarms(node_rpc: str, app: str) -> list[str]:
+    """The node stopped working on the app: a status other than OK, or disabled.
+
+    FAILED is recoverable but needs an operator; the others are terminal.
+    """
+    info = chain.node_application(node_rpc, app)
+    alarms = []
+    status = info.get("status")
+    if status != "OK":
+        reason = (info.get("reason") or "").replace("\n", " | ")
+        alarms.append(f"app status is {status}: {reason[:300]}")
+    if not info.get("enabled", True):
+        alarms.append("app is disabled in the node")
+    return alarms
+
+
+def lag_alarms(workdir: Path, theirs: dict, max_lag_blocks: int) -> list[str]:
+    """Finalized inputs the node has not processed after max_lag_blocks blocks."""
+    manifest_path = workdir / FETCH_FILE
+    if not manifest_path.exists():
+        return []
+    manifest = json.loads(manifest_path.read_text())
+    to_block = manifest.get("to_block")
+    if to_block is None:
+        return []
+    late = [
+        (item["index"], to_block - item["block_number"])
+        for item in manifest["inputs"]
+        if theirs.get(item["index"]) is None and to_block - item["block_number"] > max_lag_blocks
+    ]
+    if not late:
+        return []
+    index, lag = late[0]
+    return [
+        f"node has not processed {len(late)} finalized input(s); "
+        f"input {index} has been final for {lag} blocks (limit {max_lag_blocks})"
+    ]
+
+
+def do_compare(node_rpc: str, app: str, workdir: Path, max_lag_blocks: int | None = DEFAULT_MAX_LAG_BLOCKS) -> int:
+    """Exit 0 if all is well, 2 on a divergence, 3 if the node stopped making progress."""
+    alarms = status_alarms(node_rpc, app)
     run = json.loads((workdir / RUN_FILE).read_text())
     ours = {item["index"]: item["hash_after"] for item in run["inputs"]}
     theirs = chain.node_input_hashes(node_rpc, app)
+    if max_lag_blocks is not None:
+        alarms += lag_alarms(workdir, theirs, max_lag_blocks)
     first_bad = None
     pending = 0
     for index in sorted(ours):
@@ -172,26 +224,35 @@ def do_compare(node_rpc: str, app: str, workdir: Path) -> int:
     extra = sorted(set(theirs) - set(ours))
     if extra:
         print(f"node has {len(extra)} inputs the micronode did not replay (from {extra[0]})")
+    for alarm in alarms:
+        print(f"PROGRESS ALARM: {alarm}")
     if first_bad is not None:
         print(f"DIVERGENCE: first at input {first_bad}")
         return 2
     print(f"agree on {len(ours) - pending} inputs ({pending} not yet processed by the node)")
-    return 0
+    return 3 if alarms else 0
+
+
+def _max_lag(args) -> int | None:
+    return None if args.max_lag_blocks < 0 else args.max_lag_blocks
 
 
 def cmd_compare(args) -> int:
-    return do_compare(args.node, args.app, Path(args.dir))
+    return do_compare(args.node, args.app, Path(args.dir), _max_lag(args))
 
 
 def cmd_check(args) -> int:
     workdir = Path(args.dir)
     if do_fetch(args, workdir) == 0:
-        # nothing final yet is a normal state for a watcher, not an error
-        print(f"no inputs up to block {args.to_block} yet; nothing to compare")
-        return 0
+        # nothing final yet is a normal state for a watcher; the node's status still matters
+        print("no finalized inputs yet; nothing to compare")
+        alarms = status_alarms(args.node, args.app)
+        for alarm in alarms:
+            print(f"PROGRESS ALARM: {alarm}")
+        return 3 if alarms else 0
     result = do_run(args, workdir)
     _print_run(result)
-    return do_compare(args.node, args.app, workdir)
+    return do_compare(args.node, args.app, workdir, _max_lag(args))
 
 
 # --- show ----------------------------------------------------------------
@@ -233,6 +294,16 @@ def _add_fetch(p) -> None:
     )
 
 
+def _add_lag(p) -> None:
+    p.add_argument(
+        "--max-lag-blocks",
+        type=int,
+        default=DEFAULT_MAX_LAG_BLOCKS,
+        help="alarm when a finalized input is still unprocessed this many blocks later "
+        "(default %(default)s; negative disables)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="micronode", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -271,13 +342,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dir", required=True)
     p.add_argument("--node", required=True, help="rollups-node JSON-RPC URL")
     p.add_argument("--app", required=True, help="application name or address as the node knows it")
+    _add_lag(p)
     p.set_defaults(func=cmd_compare)
 
-    p = sub.add_parser("check", help="fetch + run + compare (exit 2 on divergence)")
+    p = sub.add_parser("check", help="fetch + run + compare (exit 2 divergence, 3 no progress)")
     p.add_argument("--dir", required=True)
     _add_fetch(p)
     _add_machine(p)
     p.add_argument("--node", required=True, help="rollups-node JSON-RPC URL")
+    _add_lag(p)
     p.set_defaults(func=cmd_check)
     return parser
 
