@@ -92,6 +92,11 @@ def node_application(node_rpc: str, app: str) -> dict:
     return rpc.call(node_rpc, "cartesi_getApplication", {"application": app})["data"]
 
 
+def node_epoch(node_rpc: str, app: str, index: int) -> dict:
+    """cartesi_getEpoch: inputs [input_index_lower_bound, input_index_upper_bound), status, roots."""
+    return rpc.call(node_rpc, "cartesi_getEpoch", {"application": app, "epoch_index": hex(index)})["data"]
+
+
 def node_input_hashes(node_rpc: str, app: str, page: int = 500) -> dict[int, str | None]:
     """Per-input machine hash as the node recorded it (None while unprocessed).
 

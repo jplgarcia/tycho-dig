@@ -6,21 +6,31 @@
     micronode compare compare a run with the machine hashes a rollups-node recorded
     micronode check   fetch + run + compare in one go
 
-Exit codes of compare/check: 0 all well, 2 divergence, 3 the node stopped making
-progress (app status not OK, disabled, or a finalized input left unprocessed),
-4 setup mismatch: the micronode's template state hash is not the application's
-(another emulator version or template), so nothing was compared.
+Exit codes of run/compare/check (run only uses 0 and 5):
+  0 all well
+  2 divergence: the node's machine hash differs from the micronode's
+  3 the node stopped making progress (app status not OK, disabled, or a finalized
+    input left unprocessed)
+  4 setup mismatch: the micronode's template state hash is not the application's
+    (another emulator version or template), so nothing was compared
+  5 machine wrong: the outputs root the machine declared at accept differs from the
+    root of the outputs it emitted (recomputed here)
+  6 node wrong: the node's outputs root differs from the micronode's recomputed root
+    while the machine's agrees
+When several fire, the first in the order 5, 6, 2, 3 decides the exit code.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
 from . import chain, machine
+from .outputs import OutputsTree
 from .evm import EvmAdvance, decode_evm_advance, encode_evm_advance, strip0x
 
 RUN_FILE = "run.json"
@@ -136,6 +146,8 @@ def do_run(args, workdir: Path) -> machine.RunResult:
                 "emulator_version": result.emulator_version,
                 "initial_hash": result.initial_hash,
                 "final_hash": result.final_hash,
+                "outputs_root_mismatches": [i.index for i in result.outputs_root_mismatches],
+                "cli_root_check_stop": result.cli_root_check_stop,
                 "inputs": [asdict(i) for i in result.inputs],
             },
             indent=2,
@@ -147,18 +159,40 @@ def do_run(args, workdir: Path) -> machine.RunResult:
 
 def _print_run(result: machine.RunResult) -> None:
     print(f"emulator {result.emulator_version or '?'}, template state hash {result.initial_hash or '?'}")
-    print(f"{'input':>6}  {'outcome':<12} {'machine hash after input':<66}  outputs root")
+    print(f"{'input':>6}  {'outcome':<12} {'machine hash after input':<66}  outputs root (declared by the machine)")
     for item in result.inputs:
+        flag = "  <- MISMATCH" if item.outputs_root_mismatch else ""
         print(
             f"{item.index:>6}  {item.outcome or '?':<12} {item.hash_after or '?':<66}  "
-            f"{item.outputs_merkle_root or '-'}"
+            f"{item.outputs_merkle_root or '-'}{flag}"
         )
+    if result.cli_root_check_stop is not None:
+        print(f"the CLI's own root check stopped the replay at input {result.cli_root_check_stop}")
+
+
+def machine_wrong_alarms(inputs: list[dict]) -> list[str]:
+    """Inputs whose declared outputs root differs from the root of the outputs the machine emitted."""
+    return [
+        f"input {i['index']}: the machine declared {i['outputs_merkle_root']}, but its own "
+        f"{i['output_count']} outputs since genesis give {i['independent_outputs_root']}"
+        for i in inputs
+        if i.get("outputs_merkle_root")
+        and i.get("independent_outputs_root")
+        and i["outputs_merkle_root"] != i["independent_outputs_root"]
+    ]
+
+
+def _print_machine_wrong(alarms: list[str]) -> None:
+    for alarm in alarms:
+        print(f"OUTPUTS ROOT MISMATCH (machine wrong): {alarm}")
 
 
 def cmd_run(args) -> int:
     result = do_run(args, Path(args.dir))
     _print_run(result)
-    return 0
+    alarms = machine_wrong_alarms(json.loads((Path(args.dir) / RUN_FILE).read_text())["inputs"])
+    _print_machine_wrong(alarms)
+    return MACHINE_WRONG if alarms else 0
 
 
 # --- compare -------------------------------------------------------------
@@ -167,12 +201,12 @@ def cmd_run(args) -> int:
 DEFAULT_MAX_LAG_BLOCKS = 25
 
 
-def status_alarms(node_rpc: str, app: str) -> list[str]:
+def status_alarms(node_rpc: str, app: str, info: dict | None = None) -> list[str]:
     """The node stopped working on the app: a status other than OK, or disabled.
 
     FAILED is recoverable but needs an operator; the others are terminal.
     """
-    info = chain.node_application(node_rpc, app)
+    info = info if info is not None else chain.node_application(node_rpc, app)
     alarms = []
     status = info.get("status")
     if status != "OK":
@@ -206,7 +240,11 @@ def lag_alarms(workdir: Path, theirs: dict, max_lag_blocks: int) -> list[str]:
     ]
 
 
+DIVERGENCE = 2
+NO_PROGRESS = 3
 SETUP_MISMATCH = 4
+MACHINE_WRONG = 5
+NODE_WRONG = 6
 
 
 def template_guard(initial_hash: str | None, expected: str | None, where: str, emulator: str | None) -> bool:
@@ -231,6 +269,68 @@ def template_guard(initial_hash: str | None, expected: str | None, where: str, e
     return False
 
 
+# rollups-node v2.0.0-alpha.13 validator, on INVALID_OUTPUTS_ROOT:
+# "epoch 1: declared outputs root does not match the root calculated from stored outputs;
+#  declared=0x...; calculated=0x..."
+_INVALID_ROOT_RE = re.compile(r"epoch (\d+):.*declared=(0x[0-9a-fA-F]{64}).*calculated=(0x[0-9a-fA-F]{64})", re.S)
+
+
+def _empty_outputs_root() -> str:
+    return "0x" + OutputsTree().root().hex()
+
+
+def node_root_crosscheck(node_rpc: str, app: str, info: dict, inputs: list[dict]) -> int | None:
+    """Diego's cross-check when the node reports INVALID_OUTPUTS_ROOT.
+
+    The node compares the root the machine declared at the epoch's end with the
+    root it calculates from its stored outputs. We hold both independently: the
+    machine's declared root and the root recomputed from the outputs the machine
+    emitted. Returns NODE_WRONG when the node's side disagrees with ours,
+    MACHINE_WRONG when the node's calculated root agrees with ours and the
+    machine's does not, 0 when everything agrees, None when it cannot decide.
+    """
+    if info.get("status") != "INVALID_OUTPUTS_ROOT":
+        return None
+    m = _INVALID_ROOT_RE.search(info.get("reason") or "")
+    if not m:
+        print(f"warning: cannot cross-check the outputs root: unrecognized reason {info.get('reason')!r}")
+        return None
+    epoch, declared, calculated = int(m.group(1)), m.group(2).lower(), m.group(3).lower()
+    bound = chain.node_epoch(node_rpc, app, epoch).get("input_index_upper_bound")
+    upper = int(bound, 16) if isinstance(bound, str) else int(bound)
+    replayed = {i["index"]: i for i in inputs}
+    if any(index not in replayed for index in range(upper)):
+        print(f"cannot cross-check epoch {epoch} yet: the micronode has not replayed inputs 0..{upper - 1}")
+        return None
+    accepted = [replayed[i] for i in range(upper) if replayed[i].get("outcome") == "rx-accepted"]
+    last = accepted[-1] if accepted else None
+    ours_machine = last["outputs_merkle_root"] if last else _empty_outputs_root()
+    ours_independent = last["independent_outputs_root"] if last else _empty_outputs_root()
+    where = f"after input {last['index']}" if last else "no accepted input"
+    print(
+        f"outputs root cross-check, epoch {epoch} (inputs below {upper}; {where}):\n"
+        f"  node      declared   {declared}\n"
+        f"  node      calculated {calculated}\n"
+        f"  micronode machine    {ours_machine}\n"
+        f"  micronode recomputed {ours_independent}"
+    )
+    node_wrong = calculated != ours_independent or declared != ours_machine
+    machine_wrong = ours_machine != ours_independent
+    if machine_wrong and not node_wrong:
+        print("VERDICT: MACHINE WRONG: the node's calculated root agrees with ours; the machine declared another. "
+              "Escalate to the guardian.")
+        return MACHINE_WRONG
+    if node_wrong and not machine_wrong:
+        print("VERDICT: NODE WRONG: the machine's root agrees with ours; the node's does not. "
+              "Fix the node; do not foreclose.")
+        return NODE_WRONG
+    if node_wrong and machine_wrong:
+        print("VERDICT: the machine and the node both disagree with the micronode: do not act on this check alone.")
+        return NODE_WRONG
+    print("VERDICT: all agree; the node's INVALID_OUTPUTS_ROOT is not explained by this epoch's roots")
+    return 0
+
+
 def do_compare(
     node_rpc: str,
     app: str,
@@ -238,15 +338,18 @@ def do_compare(
     max_lag_blocks: int | None = DEFAULT_MAX_LAG_BLOCKS,
     expected_template: str | None = None,
 ) -> int:
-    """Exit 0 all well, 2 divergence, 3 no progress, 4 setup mismatch (nothing compared)."""
+    """Exit codes: see the module docstring."""
     run = json.loads((workdir / RUN_FILE).read_text())
+    info = chain.node_application(node_rpc, app)
     if expected_template is None:
-        expected_template, where = chain.node_application(node_rpc, app).get("template_hash"), "the node's template hash"
+        expected_template, where = info.get("template_hash"), "the node's template hash"
     else:
         where = "the on-chain template hash"
     if not template_guard(run.get("initial_hash"), expected_template, where, run.get("emulator_version")):
         return SETUP_MISMATCH
-    alarms = status_alarms(node_rpc, app)
+    machine_wrong = machine_wrong_alarms(run["inputs"])
+    crosscheck = node_root_crosscheck(node_rpc, app, info, run["inputs"])
+    alarms = status_alarms(node_rpc, app, info)
     ours = {item["index"]: item["hash_after"] for item in run["inputs"]}
     theirs = chain.node_input_hashes(node_rpc, app)
     if max_lag_blocks is not None:
@@ -272,11 +375,18 @@ def do_compare(
         print(f"node has {len(extra)} inputs the micronode did not replay (from {extra[0]})")
     for alarm in alarms:
         print(f"PROGRESS ALARM: {alarm}")
+    _print_machine_wrong(machine_wrong)
     if first_bad is not None:
         print(f"DIVERGENCE: first at input {first_bad}")
-        return 2
-    print(f"agree on {len(ours) - pending} inputs ({pending} not yet processed by the node)")
-    return 3 if alarms else 0
+    else:
+        print(f"agree on {len(ours) - pending} inputs ({pending} not yet processed by the node)")
+    if machine_wrong or crosscheck == MACHINE_WRONG:
+        return MACHINE_WRONG
+    if crosscheck == NODE_WRONG:
+        return NODE_WRONG
+    if first_bad is not None:
+        return DIVERGENCE
+    return NO_PROGRESS if alarms else 0
 
 
 def _max_lag(args) -> int | None:
@@ -381,7 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--node", help="rollups-node JSON-RPC, to look up the app's InputBox and block")
     p.set_defaults(func=cmd_fetch)
 
-    p = sub.add_parser("run", help="replay input files and print per-input hashes")
+    p = sub.add_parser("run", help="replay input files and print per-input hashes (exit 5: outputs root mismatch)")
     p.add_argument("--dir", required=True)
     _add_machine(p)
     p.set_defaults(func=cmd_run)
@@ -393,7 +503,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_lag(p)
     p.set_defaults(func=cmd_compare)
 
-    p = sub.add_parser("check", help="fetch + run + compare (exit 2 divergence, 3 no progress)")
+    p = sub.add_parser("check", help="fetch + run + compare (exit codes: see above)")
     p.add_argument("--dir", required=True)
     _add_fetch(p)
     _add_machine(p)

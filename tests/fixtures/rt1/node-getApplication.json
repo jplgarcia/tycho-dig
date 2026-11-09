@@ -1,0 +1,59 @@
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "data": {
+      "name": "root",
+      "iapplication_address": "0xd2a0ad781dd1431a802a051d82fe0c15a710c42b",
+      "iconsensus_address": "0xacc4aea01f1927573ace10754e812fec68616cf0",
+      "iinputbox_address": "0xebe9f4dfc04ae10bbee663859c3dc5a23f94ea3c",
+      "template_hash": "0xbc2ff7bd4e6f46db9525a517e3f1dcb171e4da93e69dd777423086e1a486c85f",
+      "withdrawal_config": {
+        "guardian": "0x0000000000000000000000000000000000000000",
+        "log2_leaves_per_account": "0x0",
+        "log2_max_num_of_accounts": "0x0",
+        "accounts_drive_start_index": "0x0",
+        "withdrawal_output_builder": "0x0000000000000000000000000000000000000000"
+      },
+      "consensus_type": "PRT",
+      "enabled": true,
+      "status": "INVALID_OUTPUTS_ROOT",
+      "reason": "epoch 1: declared outputs root does not match the root calculated from stored outputs; declared=0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a; calculated=0xb2b72954d732ed70e622f4b388620239b2a97df685855b6c3c29588bcdcac2e6",
+      "foreclose_transaction": null,
+      "accounts_drive_proved_transaction": null,
+      "accounts_drive_merkle_root": null,
+      "created_at": "2026-11-09T16:48:40.44615Z",
+      "updated_at": "2026-11-09T17:00:38.380772Z",
+      "execution_parameters": {
+        "advance_inc_cycles": "0x400000",
+        "advance_max_cycles": "0x0",
+        "inspect_inc_cycles": "0x400000",
+        "inspect_max_cycles": "0x0",
+        "advance_inc_deadline": "0x2540be400",
+        "advance_max_deadline": "0x29e8d60800",
+        "inspect_inc_deadline": "0x2540be400",
+        "inspect_max_deadline": "0x29e8d60800",
+        "load_deadline": "0x45d964b800",
+        "store_deadline": "0x29e8d60800",
+        "fast_deadline": "0x12a05f200",
+        "snapshot_policy": "NONE",
+        "max_concurrent_inspects": 10,
+        "created_at": "2026-11-09T16:48:40.44615Z",
+        "updated_at": "2026-11-09T16:48:40.44615Z"
+      },
+      "iinputbox_block": "0x18",
+      "last_epoch_check_block": "0x35c",
+      "last_input_check_block": "0x35c",
+      "last_output_check_block": "0x90",
+      "last_tournament_check_block": "0x35c",
+      "last_foreclose_check_block": "0x35c",
+      "last_accounts_drive_proved_check_block": "0x0",
+      "last_withdrawal_check_block": "0x0",
+      "epoch_length": "0x0",
+      "claim_staging_period": "0x14",
+      "processed_inputs": "0x2",
+      "foreclose_block": "0x0",
+      "accounts_drive_proved_block": "0x0"
+    }
+  },
+  "id": 1
+}

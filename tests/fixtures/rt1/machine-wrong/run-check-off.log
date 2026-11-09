@@ -1,0 +1,40 @@
+outgen: advance 0 payload 'notices 1 8'
+outgen: emitted 1 notices of 8 bytes
+outgen: advance 1 payload 'notices 2 8 badroot'
+outgen: emitted 2 notices of 8 bytes
+Spawned JSONRPC remote cartesi machine at '127.0.0.1:39815' with pid 9
+Connected to JSONRPC remote cartesi machine at '127.0.0.1:39815'
+Loading machine: please wait
+
+Manual yield rx-accepted (1) (0x000020 data)
+Cycles: 59659069
+
+Before input 0
+59659069: 0xbc2ff7bd4e6f46db9525a517e3f1dcb171e4da93e69dd777423086e1a486c85f
+59659069: 0x5c2a0d69fb63369bdb798e08bfdc21ce9643f1c69c97ad1ee1ba3b83a25054a7
+
+Automatic yield tx-output (2) (0x000064 data)
+Cycles: 59692156
+
+Manual yield rx-accepted (1) (0x000020 data)
+Cycles: 61759514
+Storing out-0-0.bin
+Storing root-0.bin
+
+Before input 1
+61759514: 0xd695f7a53a7e61d245991373a97b2649258fc7e5765a2177797ad39fcf210348
+61759514: 0x935881a8e07b2927122755b0351efb2e352e3ecb047e66ea4e3adb423fc1f244
+
+Automatic yield tx-output (2) (0x000064 data)
+Cycles: 61785027
+
+Automatic yield tx-output (2) (0x000064 data)
+Cycles: 61851047
+
+Manual yield rx-accepted (1) (0x000020 data)
+Cycles: 61902144
+Storing out-1-1.bin
+Storing out-1-2.bin
+Storing root-1.bin
+61902144: 0xf1c56901eb869a701d74345ccb38c7fbef2bee3b4d15173f04161870e988290c
+Shutdown JSONRPC remote cartesi machine at '127.0.0.1:39815'

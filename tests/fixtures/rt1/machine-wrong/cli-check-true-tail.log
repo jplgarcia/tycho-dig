@@ -1,0 +1,12 @@
+Cycles: 61902144
+Storing out-1-1.bin
+Storing out-1-2.bin
+Storing root-1.bin
+lua5.4: /usr/share/lua/5.4/cartesi-machine.lua:3038: outputs Merkle root mismatch at input 1
+stack traceback:
+	[C]: in function 'error'
+	/usr/share/lua/5.4/cartesi-machine.lua:31: in upvalue 'assertf'
+	/usr/share/lua/5.4/cartesi-machine.lua:3038: in upvalue 'flush_pending_outputs'
+	/usr/share/lua/5.4/cartesi-machine.lua:3943: in local 'run_advance_state_epoch'
+	/usr/share/lua/5.4/cartesi-machine.lua:4019: in main chunk
+	[C]: in ?

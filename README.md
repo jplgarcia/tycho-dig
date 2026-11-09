@@ -12,7 +12,7 @@ All implementations run the same emulator. So when the micronode gets the same i
 - state lost or corrupted across snapshots or restarts;
 - the hash or outputs root being recorded wrongly.
 
-It cannot see bugs in the emulator or in the application, because both sides execute them identically.
+It cannot see bugs in the emulator or in the application, because both sides execute them identically. One application bug it does catch: a guest that declares an outputs Merkle root that does not match the outputs it emitted (see [Outputs root](#outputs-root)).
 
 ## Usage
 
@@ -29,7 +29,7 @@ micronode show work/input-1.bin
 micronode run --dir work --template path/to/app-template
 ```
 
-`run` replays `input-0.bin, input-1.bin, ...` from the template. For every input it prints the outcome (rx-accepted, rx-rejected or tx-exception), the machine hash after the input, and the outputs Merkle root. It also writes `run.json`, `run.log`, and the outputs and reports.
+`run` replays `input-0.bin, input-1.bin, ...` from the template. For every input it prints the outcome (rx-accepted, rx-rejected or tx-exception), the machine hash after the input, and the outputs Merkle root the machine declared. It also writes `run.json`, `run.log`, and the outputs and reports. It exits with 5 when a declared outputs root is wrong (see [Outputs root](#outputs-root)).
 
 ### Check a deployed application
 
@@ -51,7 +51,7 @@ You can also run `fetch`, `run` and `compare` separately.
 
 ### Exit codes and alarms
 
-`check` and `compare` exit with one of three codes:
+`check` and `compare` exit with one of these codes:
 
 | Exit | Meaning |
 |---|---|
@@ -59,6 +59,10 @@ You can also run `fetch`, `run` and `compare` separately.
 | 2 | **Divergence:** the first input where the node's hash differs from the micronode's. |
 | 3 | **Progress alarm:** the node stopped working on the app. |
 | 4 | **Setup mismatch:** the micronode is not running the application's machine, so nothing was compared. |
+| 5 | **Machine wrong:** the outputs root the machine declared differs from the root of the outputs it emitted. |
+| 6 | **Node wrong:** the node's outputs root differs from the micronode's, while the machine's root agrees with it. |
+
+When several fire, the exit code is the first of 5, 6, 2, 3. Every alarm is printed either way.
 
 Before comparing anything, `check` verifies that the state hash of the template the micronode loaded (the hash at the boundary before input 0) equals the application contract's `getTemplateHash()`. `compare` checks it against the node's `template_hash` instead.
 
@@ -69,7 +73,26 @@ A progress alarm (`PROGRESS ALARM: ...`) fires in two cases:
 - **The app is stopped in the node:** its `status` is anything but `OK` (`FAILED`, `DIVERGED`, `CORRUPTED`, `GUEST_EXCEPTION`, ...), or it is disabled. `FAILED` needs an operator; the others are terminal.
 - **The node is behind:** a finalized input is still unprocessed more than `--max-lag-blocks` blocks after the finalized head (default 25; a negative value disables the check). This catches a node that died or hangs while its status still says `OK`.
 
-Both checks are stateless, so `check` can run from cron or a loop without keeping anything between runs. When both fire, the divergence decides the exit code.
+Both checks are stateless, so `check` can run from cron or a loop without keeping anything between runs.
+
+### Outputs root
+
+When the guest accepts an input, it writes the root of its outputs Merkle tree into the TX buffer. The tree holds every accepted output since genesis, and it is what the epoch's claim settles on-chain. A guest that writes the wrong root makes every output of that epoch unprovable (red-team item RT-1).
+
+`run` recomputes the root itself after every accepted input, from the outputs the machine emitted. Its tree follows libcmt: height 63, leaf `keccak256(output)`. It then compares that root with the one the machine declared. A mismatch prints `OUTPUTS ROOT MISMATCH (machine wrong)` with the input, the declared root, and the recomputed root.
+
+The CLI has the same check built in (`check_outputs_merkle_root`, on by default). When it fires, the CLI stops with `outputs Merkle root mismatch at input N` and exits with 1. The micronode turns that check off and keeps replaying, so the machine hashes of later inputs can still be compared with the node's. With a CLI that cannot turn it off, the micronode reads the CLI's assertion as the same detection.
+
+The Go node checks the root only when the epoch closes, in its validator. It then marks the app `INVALID_OUTPUTS_ROOT`, with both roots in the reason. `compare` reads them and runs Diego's cross-check:
+
+| Node declared | Node calculated | Micronode: machine | Micronode: recomputed | Verdict |
+|---|---|---|---|---|
+| bad | good | bad | good | **machine wrong** (exit 5): escalate to the guardian |
+| good | bad | good | good | **node wrong** (exit 6): fix the node, do not foreclose |
+
+The micronode's "machine wrong" alarm fires on its own, at the bad input, even before the node closes the epoch. Only the root after an epoch's last accepted input reaches the chain. The micronode reports every input, as the CLI does.
+
+The micronode shares the emulator and the template with the node, so an emulator bug would not show here. The tree code is its own, Python's `hashlib` KECCAK-256 (OpenSSL 3.2 or later) or a pure-Python fallback. It shares nothing with libcmt or the node.
 
 ## Test template
 
@@ -91,7 +114,7 @@ scripts/make-echo-template.sh linux.bin rootfs-tools.ext2 work/echo-template
 - **Which hash is compared:** the CLI prints two hashes before input N: the boundary state, and the state with the input loaded. The state after input N is the boundary hash of input N+1, or `--final-hash` for the last input. The node records `GetRootHash` right after each advance (rollups-node `pkg/machine`), which is the same state. For a rejected input, both sides record the reverted state.
 - **Emulator versions:** both 0.21 and 0.22 work. The two releases name the input range differently (`input_index_*` in 0.21, `input_file_index_*` in 0.22), and `run` detects which one the CLI accepts. Any image with `cartesi-machine` on its PATH can be used, including the rollups-node image: `--image ghcr.io/cartesi/rollups-node:<tag>`.
 - **Replay range:** every run replays from input 0. Resuming from a stored snapshot is not implemented yet.
-- **Reverts:** the machine runs with `--remote-spawn` because the CLI's default revert mode forks a remote machine to undo rejected inputs.
+- **Reverts:** the machine runs with `--remote-spawn` because the CLI's default revert mode forks a remote machine to undo rejected inputs. It also passes `--remote-shutdown`, so the CLI stops that server on exit, even after an error. Without the flag the CLI prints `Left alive JSONRPC remote cartesi machine`. As a second guard, a native run kills the CLI's process group when it ends, and a Docker run removes its container by name.
 
 ## Checked against a live rollups-node (2026-11-05)
 
@@ -141,6 +164,18 @@ With `EVERY_INPUT`, the advancer could not write the snapshot, because the test 
 - a stopped advancer whose status still said `OK`, after the lag limit. One input was final for 33 blocks against a limit of 25.
 
 After recovery, `check` exits with 0 again.
+
+### Outputs root mismatch (RT-1, 2026-11-09)
+
+A test guest emitted its notices, then accepted input 1 with `0x5a...5a` in the TX buffer instead of its outputs root. The run used rollups-node `v2.0.0-alpha.13` and the `cartesi-machine` 0.21.0 from the node image. The node marked the app `INVALID_OUTPUTS_ROOT` when epoch 1 closed.
+
+| Step | Result |
+|---|---|
+| `micronode run` on the run's two inputs | the template matches the app's (`0xbc2ff7bd...c85f`); input 1 is flagged `OUTPUTS ROOT MISMATCH (machine wrong)`: declared `0x5a...5a`, recomputed `0xb2b7...c2e6`; exit 5 |
+| `micronode compare` against the node's recorded JSON-RPC answers | both machine hashes agree with the node; the node's calculated root equals ours, so the verdict is **machine wrong**; exit 5 |
+| Control: the same guest without the bad root | no mismatch; exit 0 |
+
+Before this, the CLI's own check stopped the replay with exit 1, the micronode crashed with a Python `RuntimeError`, and none of its alarms fired. The unit tests replay that run's files, and they also cover the "node wrong" case: a simulated node that drops the last output.
 
 ## Tests
 
