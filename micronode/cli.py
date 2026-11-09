@@ -7,7 +7,9 @@
     micronode check   fetch + run + compare in one go
 
 Exit codes of compare/check: 0 all well, 2 divergence, 3 the node stopped making
-progress (app status not OK, disabled, or a finalized input left unprocessed).
+progress (app status not OK, disabled, or a finalized input left unprocessed),
+4 setup mismatch: the micronode's template state hash is not the application's
+(another emulator version or template), so nothing was compared.
 """
 
 from __future__ import annotations
@@ -129,7 +131,13 @@ def do_run(args, workdir: Path) -> machine.RunResult:
     result = machine.run(Path(args.template), workdir, 0, end, image=args.image, native=args.native)
     (workdir / RUN_FILE).write_text(
         json.dumps(
-            {"template": str(args.template), "final_hash": result.final_hash, "inputs": [asdict(i) for i in result.inputs]},
+            {
+                "template": str(args.template),
+                "emulator_version": result.emulator_version,
+                "initial_hash": result.initial_hash,
+                "final_hash": result.final_hash,
+                "inputs": [asdict(i) for i in result.inputs],
+            },
             indent=2,
         )
     )
@@ -138,6 +146,7 @@ def do_run(args, workdir: Path) -> machine.RunResult:
 
 
 def _print_run(result: machine.RunResult) -> None:
+    print(f"emulator {result.emulator_version or '?'}, template state hash {result.initial_hash or '?'}")
     print(f"{'input':>6}  {'outcome':<12} {'machine hash after input':<66}  outputs root")
     for item in result.inputs:
         print(
@@ -197,10 +206,47 @@ def lag_alarms(workdir: Path, theirs: dict, max_lag_blocks: int) -> list[str]:
     ]
 
 
-def do_compare(node_rpc: str, app: str, workdir: Path, max_lag_blocks: int | None = DEFAULT_MAX_LAG_BLOCKS) -> int:
-    """Exit 0 if all is well, 2 on a divergence, 3 if the node stopped making progress."""
-    alarms = status_alarms(node_rpc, app)
+SETUP_MISMATCH = 4
+
+
+def template_guard(initial_hash: str | None, expected: str | None, where: str, emulator: str | None) -> bool:
+    """True when the micronode ran the same machine the application was deployed with.
+
+    A different emulator version (0.23 changes the default MIMPID, so every state
+    hash changes) or a different template gives a different initial hash. Then
+    every per-input hash differs with no bug anywhere, so we refuse to compare.
+    """
+    if not initial_hash or not expected:
+        print(f"warning: cannot verify the template ({where}: {expected}, micronode: {initial_hash})")
+        return True
+    if initial_hash.lower() == expected.lower():
+        print(f"template matches {where} ({expected})")
+        return True
+    print(
+        f"SETUP MISMATCH: the micronode's template state hash {initial_hash} is not {where} {expected}.\n"
+        f"  The micronode (emulator {emulator or '?'}) is not running the application's machine: a different\n"
+        f"  emulator version (state hashes change across versions) or a different template. Not comparing;\n"
+        f"  use the emulator version and template the application was deployed with."
+    )
+    return False
+
+
+def do_compare(
+    node_rpc: str,
+    app: str,
+    workdir: Path,
+    max_lag_blocks: int | None = DEFAULT_MAX_LAG_BLOCKS,
+    expected_template: str | None = None,
+) -> int:
+    """Exit 0 all well, 2 divergence, 3 no progress, 4 setup mismatch (nothing compared)."""
     run = json.loads((workdir / RUN_FILE).read_text())
+    if expected_template is None:
+        expected_template, where = chain.node_application(node_rpc, app).get("template_hash"), "the node's template hash"
+    else:
+        where = "the on-chain template hash"
+    if not template_guard(run.get("initial_hash"), expected_template, where, run.get("emulator_version")):
+        return SETUP_MISMATCH
+    alarms = status_alarms(node_rpc, app)
     ours = {item["index"]: item["hash_after"] for item in run["inputs"]}
     theirs = chain.node_input_hashes(node_rpc, app)
     if max_lag_blocks is not None:
@@ -252,7 +298,9 @@ def cmd_check(args) -> int:
         return 3 if alarms else 0
     result = do_run(args, workdir)
     _print_run(result)
-    return do_compare(args.node, args.app, workdir, _max_lag(args))
+    app_address = json.loads((workdir / FETCH_FILE).read_text())["app"]
+    expected = chain.onchain_template_hash(args.rpc, app_address)
+    return do_compare(args.node, args.app, workdir, _max_lag(args), expected_template=expected)
 
 
 # --- show ----------------------------------------------------------------

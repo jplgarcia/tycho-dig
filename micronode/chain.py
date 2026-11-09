@@ -77,6 +77,16 @@ def resolve_block(eth_rpc: str, block: int | str) -> int:
     return int(head["number"], 16)
 
 
+# cast sig "getTemplateHash()" (rollups-contracts IApplication)
+GET_TEMPLATE_HASH = "0x61b12c66"
+
+
+def onchain_template_hash(eth_rpc: str, app: str) -> str:
+    """The template hash the application contract was deployed with."""
+    out = rpc.call(eth_rpc, "eth_call", [{"to": app, "data": GET_TEMPLATE_HASH}, "latest"])
+    return "0x" + strip0x(out).lower()[-64:]
+
+
 def node_application(node_rpc: str, app: str) -> dict:
     """cartesi_getApplication: name/address, InputBox address and deployment block."""
     return rpc.call(node_rpc, "cartesi_getApplication", {"application": app})["data"]

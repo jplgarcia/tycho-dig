@@ -31,6 +31,12 @@ class RunResult:
     inputs: list[InputResult] = field(default_factory=list)
     final_hash: str | None = None
     log: str = ""
+    emulator_version: str | None = None
+
+    @property
+    def initial_hash(self) -> str | None:
+        """State hash of the loaded template, at the boundary before input 0."""
+        return self.inputs[0].hash_before if self.inputs and self.inputs[0].index == 0 else None
 
 
 def parse_run_log(text: str) -> RunResult:
@@ -104,11 +110,18 @@ def _cli_args(begin: int, end: int, template: str, final_hash: bool, legacy: boo
     return args
 
 
-def _is_legacy(prefix: list[str]) -> bool:
-    """True when the CLI predates input_file_index_* (emulator <= 0.21)."""
+def _probe(prefix: list[str]) -> tuple[bool, str | None]:
+    """(legacy, version) of a cartesi-machine CLI.
+
+    legacy is True when the CLI predates input_file_index_* (emulator <= 0.21).
+    """
     proc = subprocess.run([*prefix, "--help"], capture_output=True, text=True)
     help_text = proc.stdout + proc.stderr
-    return "input_file_index_begin" not in help_text and "input_index_begin" in help_text
+    legacy = "input_file_index_begin" not in help_text and "input_index_begin" in help_text
+    proc = subprocess.run([*prefix, "--version"], capture_output=True, text=True)
+    first = (proc.stdout + proc.stderr).strip().splitlines()
+    version = first[0].removeprefix("cartesi-machine").strip() if first else None
+    return legacy, version
 
 
 def run(
@@ -130,11 +143,11 @@ def run(
         exe = shutil.which("cartesi-machine")
         if not exe:
             raise RuntimeError("cartesi-machine is not on PATH (drop --native to use Docker)")
-        legacy = _is_legacy([exe])
+        legacy, version = _probe([exe])
         cmd = [exe, *_cli_args(begin, end, str(template), True, legacy)]
         cwd = str(workdir)
     else:
-        legacy = _is_legacy(["docker", "run", "--rm", "--entrypoint", "cartesi-machine", image])
+        legacy, version = _probe(["docker", "run", "--rm", "--entrypoint", "cartesi-machine", image])
         cmd = [
             "docker", "run", "--rm",
             "-v", f"{template}:/template:ro",
@@ -151,6 +164,7 @@ def run(
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace")
     text = proc.stdout + proc.stderr
     result = parse_run_log(text)
+    result.emulator_version = version
     # An input that raises an exception is terminal: the CLI stops there and exits 1.
     # That is an outcome to compare, not a failure of the run.
     ended_in_exception = bool(result.inputs) and result.inputs[-1].outcome == "tx-exception"

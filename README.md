@@ -58,6 +58,11 @@ You can also run `fetch`, `run` and `compare` separately.
 | 0 | All is well. |
 | 2 | **Divergence:** the first input where the node's hash differs from the micronode's. |
 | 3 | **Progress alarm:** the node stopped working on the app. |
+| 4 | **Setup mismatch:** the micronode is not running the application's machine, so nothing was compared. |
+
+Before comparing anything, `check` verifies that the state hash of the template the micronode loaded (the hash at the boundary before input 0) equals the application contract's `getTemplateHash()`. `compare` checks it against the node's `template_hash` instead.
+
+A different emulator version gives a different hash: for example, 0.23 changes the default MIMPID, so every state hash changes. A different template does too. When the hashes differ, every per-input hash would differ with no bug anywhere, so the micronode refuses instead of reporting a divergence. `run` prints the emulator version and the template state hash.
 
 A progress alarm (`PROGRESS ALARM: ...`) fires in two cases:
 
@@ -76,7 +81,13 @@ scripts/make-echo-template.sh linux.bin rootfs-tools.ext2 work/echo-template
 
 ## Notes
 
-- **Matching versions:** the template must have been stored by the same emulator version as `--image` (default `cartesi/machine-emulator:0.22.0`). A 0.21 template fails to load on 0.22 with `expected "archive_version" 8 (got 7)`.
+- **Matching versions:** the template must have been stored by the same emulator version as `--image` (default `cartesi/machine-emulator:0.22.0`). A 0.21 template fails to load on 0.22 with `expected "archive_version" 8 (got 7)`. Even when a template loads, the micronode must run the version the application was deployed with, or the template guard refuses (exit 4).
+- **Emulator 0.23 (pre-release `v0.23.0-test2`), not tested yet:**
+  - The default MIMPID changes from 22 to 23, so state hashes differ from 0.22.
+  - Stored machines use archive version 9, so 0.22 snapshots do not load.
+  - The JSON-RPC protocol is 0.9.0.
+  - A 0.23 micronode can only check an application deployed with a 0.23 template. Against a 0.22 app it exits with 4.
+  - The CLI's on-chain proof output is changing: it will also prove that the machine is in a manual yield with reason accept. The micronode does not use the CLI's proof files, so this does not affect it.
 - **Which hash is compared:** the CLI prints two hashes before input N: the boundary state, and the state with the input loaded. The state after input N is the boundary hash of input N+1, or `--final-hash` for the last input. The node records `GetRootHash` right after each advance (rollups-node `pkg/machine`), which is the same state. For a rejected input, both sides record the reverted state.
 - **Emulator versions:** both 0.21 and 0.22 work. The two releases name the input range differently (`input_index_*` in 0.21, `input_file_index_*` in 0.22), and `run` detects which one the CLI accepts. Any image with `cartesi-machine` on its PATH can be used, including the rollups-node image: `--image ghcr.io/cartesi/rollups-node:<tag>`.
 - **Replay range:** every run replays from input 0. Resuming from a stored snapshot is not implemented yet.

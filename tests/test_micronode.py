@@ -129,14 +129,18 @@ class FakeNode(BaseHTTPRequestHandler):
 
 
 class CompareTest(unittest.TestCase):
-    def _compare(self, node_hashes, app=None, manifest=None):
+    def _compare(self, node_hashes, app=None, manifest=None, initial_hash=None):
         FakeNode.hashes = node_hashes
         FakeNode.app = app or {}
         server = HTTPServer(("127.0.0.1", 0), FakeNode)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                run = {"inputs": [{"index": i, "hash_after": h} for i, h in enumerate(AFTER)]}
+                run = {
+                    "initial_hash": initial_hash,
+                    "emulator_version": "0.23.0-test2",
+                    "inputs": [{"index": i, "hash_after": h} for i, h in enumerate(AFTER)],
+                }
                 Path(tmp, cli.RUN_FILE).write_text(json.dumps(run))
                 if manifest is not None:
                     Path(tmp, cli.FETCH_FILE).write_text(json.dumps(manifest))
@@ -157,6 +161,23 @@ class CompareTest(unittest.TestCase):
         code, out = self._compare(bad)
         self.assertEqual(code, 2)
         self.assertIn("first at input 1", out)
+
+    def test_template_matches(self):
+        tpl = "0x" + "11" * 32
+        code, out = self._compare(AFTER, app={"template_hash": tpl}, initial_hash=tpl)
+        self.assertEqual(code, 0, out)
+        self.assertIn("template matches", out)
+
+    def test_template_mismatch_refuses(self):
+        # e.g. a micronode on 0.23 (new MIMPID) against an app deployed with a 0.22 template:
+        # every hash differs, so it must not be reported as a divergence
+        code, out = self._compare(
+            ["0x" + "cd" * 32] * 3, app={"template_hash": "0x" + "11" * 32}, initial_hash="0x" + "22" * 32
+        )
+        self.assertEqual(code, cli.SETUP_MISMATCH, out)
+        self.assertIn("SETUP MISMATCH", out)
+        self.assertIn("0.23.0-test2", out)
+        self.assertNotIn("DIVERGENCE", out)
 
     def test_app_failed(self):
         code, out = self._compare(AFTER[:2] + [None], app={"status": "FAILED", "reason": "could not store\nthe machine"})
