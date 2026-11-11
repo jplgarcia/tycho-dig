@@ -112,6 +112,16 @@ class OutputsTree:
                 break
         self.count += 1
 
+    def to_json(self) -> dict:
+        return {"count": self.count, "state": [h.hex() if h else None for h in self._state]}
+
+    @classmethod
+    def from_json(cls, data: dict) -> "OutputsTree":
+        tree = cls()
+        tree.count = data["count"]
+        tree._state = [bytes.fromhex(h) if h else None for h in data["state"]]
+        return tree
+
     def root(self) -> bytes:
         node = _PRISTINE[0]
         for level in range(HEIGHT):

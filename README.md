@@ -49,6 +49,40 @@ micronode check --dir work \
 
 You can also run `fetch`, `run` and `compare` separately.
 
+### Watch an application and alert
+
+```bash
+micronode watch --dir watch-state \
+  --template path/to/app-template --image <the emulator image the app was deployed with> \
+  --rpc https://<an Ethereum RPC, ideally not the one the node uses> \
+  --node http://localhost:10011/rpc --app <app name or address> \
+  --interval 30 \
+  --alert-webhook https://hooks.slack.com/services/... \
+  --alert-cmd 'osascript -e "display notification \"$MICRONODE_ALERT_TEXT\" with title \"micronode\""'
+```
+
+`watch` runs until it is stopped. On every tick (`--interval` seconds) it does four things:
+
+1. **Reads new inputs:** `InputAdded` events from the InputBox, up to the `finalized` block, through `--rpc`. The node is not involved.
+2. **Advances its machine:** it gives the new inputs to the `cartesi-machine` CLI. It resumes from the machine it stored at the end of the previous tick (`--load`, then `--store`), so each input runs once. Before resuming, it checks that the stored machine starts at the hash it was stored with. On the first tick it checks the template against the contract's `getTemplateHash()`.
+3. **Compares:** it compares the machine hash after every input with the node's `machine_hash`, and checks the outputs roots, the node's status and the node's lag, as `check` does.
+4. **Alerts:** it sends each new alarm once, and a `RESOLVED` note when the alarm goes away. Alerts go to stdout, to `--alert-cmd` (the text arrives on stdin and in `MICRONODE_ALERT_TEXT`), and to `--alert-webhook` (a JSON POST `{"text": ...}`, which Slack accepts).
+
+| Alarm key | Fires when |
+|---|---|
+| `divergence:N` | the node's hash for input N differs from the micronode's (only the first divergent input is reported) |
+| `machine-wrong:N` | the machine declared a wrong outputs root at input N |
+| `outputs-root-verdict` | the node reports `INVALID_OUTPUTS_ROOT`, and the cross-check says machine wrong or node wrong |
+| `status`, `disabled` | the app's status in the node is not `OK`, or the app is disabled |
+| `lag` | a finalized input is still unprocessed after `--max-lag-blocks` |
+| `node-template` | the node's template hash is not the contract's |
+| `setup` | the micronode's template is not the application's; nothing is compared |
+| `blocked` | an input raised an exception, so the machine takes no more inputs |
+| `input-changed:N`, `chain-rewind` | an input already read below finality changed, or the finalized block went back |
+| `watcher` | the micronode could not check for 3 ticks in a row (RPC down, CLI failing) |
+
+Everything is kept in `--dir`, so a restarted watcher resumes where it stopped and does not resend alarms it already sent: inputs, per-input results, the outputs tree, the stored machine and the alarms. Two watchers cannot share a directory. `--once` runs one tick and exits with the code of the standing alarms, which is useful from cron.
+
 ### Exit codes and alarms
 
 `check` and `compare` exit with one of these codes:

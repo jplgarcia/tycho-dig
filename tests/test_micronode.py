@@ -306,7 +306,9 @@ class FakeCliRun(unittest.TestCase):
         from micronode import machine
 
         with mock.patch.dict(os.environ, {**self.env, **env}):
-            return machine.run(Path(self.tmp.name), self.work, 0, 2, image="fake", native=native)
+            result = machine.run(Path(self.tmp.name), self.work, 0, 2, image="fake", native=native)
+            machine.verify_outputs_roots(result, self.work)
+            return result
 
     def _cmd_run(self, **env):
         out = StringIO()

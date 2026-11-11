@@ -129,23 +129,28 @@ def stored_outputs(text: str) -> dict[int, list[tuple[int, str]]]:
     return out
 
 
-def verify_outputs_roots(result: RunResult, workdir: Path) -> None:
+def verify_outputs_roots(result: RunResult, workdir: Path, tree: OutputsTree | None = None) -> OutputsTree:
     """Recompute the outputs root after every accepted input and set independent_outputs_root.
 
-    The replay starts at genesis (input 0, empty tree), so the tree holds every
-    accepted output of the run, in global output index order.
+    ``tree`` holds every accepted output before this run's first input (empty for a
+    replay from genesis); it is extended in place and returned. Within a run the
+    CLI numbers outputs consecutively; on a resumed run it numbers from 0 again,
+    so only the order is used, not the CLI's global index.
     """
     files = stored_outputs(result.log)
-    tree = OutputsTree()
+    tree = tree if tree is not None else OutputsTree()
+    previous = None
     for item in result.inputs:
         if item.outcome != "rx-accepted":
             continue  # rejected outputs never enter the tree; an exception ends the run
         for index, name in sorted(files.get(item.index, [])):
-            if index != tree.count:
-                raise RuntimeError(f"output {name}: expected global output index {tree.count}")
+            if previous is not None and index != previous + 1:
+                raise RuntimeError(f"output {name}: expected output index {previous + 1}")
+            previous = index
             tree.append((workdir / name).read_bytes())
         item.independent_outputs_root = "0x" + tree.root().hex()
         item.output_count = tree.count
+    return tree
 
 
 @dataclass
@@ -166,6 +171,7 @@ def _cli_args(
     legacy: bool = False,
     root_check_option: bool = False,
     remote_shutdown: bool = False,
+    store: str | None = None,
 ) -> list[str]:
     # emulator 0.21 names the range input_index_begin/end; 0.22 input_file_index_begin/end
     key = "input_index" if legacy else "input_file_index"
@@ -195,6 +201,9 @@ def _cli_args(
     if remote_shutdown:
         # without it the CLI leaves the spawned JSON-RPC machine server running when it exits
         args.append("--remote-shutdown")
+    if store:
+        # stores the machine as it is after the last input, to resume from it next time
+        args.append(f"--store={store}")
     return args
 
 
@@ -257,14 +266,23 @@ def run(
     end: int,
     image: str = DEFAULT_IMAGE,
     native: bool = False,
+    store: Path | None = None,
+    need_root_check_option: bool = False,
 ) -> RunResult:
-    """Replay input files ``workdir/input-<begin..end-1>.bin`` from the template.
+    """Advance input files ``workdir/input-<begin..end-1>.bin`` from a stored machine.
 
-    ``native`` uses a ``cartesi-machine`` on PATH; otherwise the CLI runs in a
-    throwaway Docker container with the template mounted read-only.
+    ``template`` is the machine to load: the application's template for a replay
+    from input 0, or a machine stored by an earlier run (``store``) to resume at
+    ``begin``. ``store``, if given, must be inside ``workdir``. ``native`` uses a
+    ``cartesi-machine`` on PATH; otherwise the CLI runs in a throwaway Docker
+    container with ``workdir`` mounted and the template mounted read-only.
     """
     template = template.resolve()
     workdir = workdir.resolve()
+    if store is not None:
+        store = store.resolve()
+        if workdir not in store.parents:
+            raise ValueError(f"--store {store} must be inside {workdir}")
     for pattern in _RUN_FILE_GLOBS:
         for stale in workdir.glob(pattern):
             stale.unlink()
@@ -273,23 +291,30 @@ def run(
         if not exe:
             raise RuntimeError("cartesi-machine is not on PATH (drop --native to use Docker)")
         caps = _probe([exe])
-        cmd = [exe, *_cli_args(begin, end, str(template), True, caps.legacy, caps.root_check_option, caps.remote_shutdown)]
-        cwd, container = str(workdir), None
+        load, store_arg, mounts = str(template), str(store) if store else None, []
+        prefix, cwd, container = [exe], str(workdir), None
     else:
         caps = _probe(["docker", "run", "--rm", "--entrypoint", "cartesi-machine", image])
         container = f"micronode-{uuid.uuid4().hex[:12]}"
-        cmd = [
+        if workdir in template.parents:
+            load, mounts = f"/work/{template.relative_to(workdir)}", []
+        else:
+            load, mounts = "/template", ["-v", f"{template}:/template:ro"]
+        store_arg = f"/work/{store.relative_to(workdir)}" if store else None
+        prefix = [
             "docker", "run", "--rm", "--name", container,
-            "-v", f"{template}:/template:ro",
+            *mounts,
             "-v", f"{workdir}:/work",
             "-w", "/work",
             "--user", f"{os.getuid()}:{os.getgid()}",
             # any image with cartesi-machine on PATH works (e.g. the rollups-node image)
             "--entrypoint", "cartesi-machine",
             image,
-            *_cli_args(begin, end, "/template", True, caps.legacy, caps.root_check_option, caps.remote_shutdown),
         ]
         cwd = None
+    if need_root_check_option and not caps.root_check_option:
+        raise RuntimeError(f"cartesi-machine {caps.version} cannot turn off check_outputs_merkle_root")
+    cmd = [*prefix, *_cli_args(begin, end, load, True, caps.legacy, caps.root_check_option, caps.remote_shutdown, store_arg)]
     proc = _execute(cmd, cwd, container)
     text = proc.stdout + proc.stderr
     result = parse_run_log(text)
@@ -306,5 +331,4 @@ def run(
         root = workdir / f"root-{item.index}.bin"
         if root.exists():
             item.outputs_merkle_root = "0x" + root.read_bytes().hex()
-    verify_outputs_roots(result, workdir)
     return result

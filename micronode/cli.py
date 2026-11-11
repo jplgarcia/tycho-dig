@@ -5,6 +5,7 @@
     micronode run     replay input files from the template, print per-input hashes
     micronode compare compare a run with the machine hashes a rollups-node recorded
     micronode check   fetch + run + compare in one go
+    micronode watch   follow the app: new finalized inputs, advance, compare, alert
 
 Exit codes of run/compare/check (run only uses 0 and 5):
   0 all well
@@ -139,6 +140,7 @@ def do_run(args, workdir: Path) -> machine.RunResult:
     if args.end is None and len(indices) > end:
         print(f"warning: input-{end}.bin is missing; replaying 0..{end - 1} only", file=sys.stderr)
     result = machine.run(Path(args.template), workdir, 0, end, image=args.image, native=args.native)
+    machine.verify_outputs_roots(result, workdir)
     (workdir / RUN_FILE).write_text(
         json.dumps(
             {
@@ -413,6 +415,31 @@ def cmd_check(args) -> int:
     return do_compare(args.node, args.app, workdir, _max_lag(args), expected_template=expected)
 
 
+# --- watch ---------------------------------------------------------------
+
+
+def cmd_watch(args) -> int:
+    from .watch import Config, run_watch
+
+    cfg = Config(
+        dir=Path(args.dir),
+        template=Path(args.template),
+        rpc=args.rpc,
+        node=args.node,
+        app=args.app,
+        inputbox=args.inputbox,
+        from_block=args.from_block,
+        to_block=args.to_block,
+        image=args.image,
+        native=args.native,
+        max_lag_blocks=_max_lag(args),
+        alert_cmd=args.alert_cmd,
+        alert_webhook=args.alert_webhook,
+        label=args.label,
+    )
+    return run_watch(cfg, args.interval, once=args.once)
+
+
 # --- show ----------------------------------------------------------------
 
 
@@ -510,6 +537,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--node", required=True, help="rollups-node JSON-RPC URL")
     _add_lag(p)
     p.set_defaults(func=cmd_check)
+
+    p = sub.add_parser("watch", help="follow the app and alert on any disagreement (runs until stopped)")
+    p.add_argument("--dir", required=True, help="state directory (inputs, results, stored machine, alarms sent)")
+    _add_fetch(p)
+    p.add_argument("--template", required=True, help="machine snapshot directory of the application")
+    p.add_argument("--image", default=machine.DEFAULT_IMAGE, help="emulator Docker image (default %(default)s)")
+    p.add_argument("--native", action="store_true", help="use cartesi-machine from PATH instead of Docker")
+    p.add_argument("--node", required=True, help="rollups-node JSON-RPC URL")
+    _add_lag(p)
+    p.add_argument("--interval", type=float, default=30, help="seconds between ticks (default %(default)s)")
+    p.add_argument("--once", action="store_true", help="run one tick and exit with the alarm code")
+    p.add_argument("--alert-cmd", help="shell command run for every alert and resolution; the text is on stdin "
+                   "and in MICRONODE_ALERT_TEXT (also MICRONODE_ALERT_KIND, _KEY, _APP)")
+    p.add_argument("--alert-webhook", help="URL that gets a JSON POST {\"text\": ...} per alert (Slack-compatible)")
+    p.add_argument("--label", help="how alerts name the app (default: --app)")
+    p.set_defaults(func=cmd_watch)
     return parser
 
 
