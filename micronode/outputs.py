@@ -122,6 +122,30 @@ class OutputsTree:
         tree._state = [bytes.fromhex(h) if h else None for h in data["state"]]
         return tree
 
+    @classmethod
+    def from_frontier(cls, levels: list[bytes | None]) -> "OutputsTree":
+        """The tree a frontier stored by the emulator's hash_tree.frontier_store describes.
+
+        That frontier has HEIGHT + 1 levels; level L holds the root of a complete subtree of
+        2^L leaves exactly when bit L of the leaf count is set, which is this class's state.
+        The top level is set only in a full tree (2^63 outputs), which is not supported here.
+        """
+        if len(levels) != HEIGHT + 1:
+            raise ValueError(f"outputs frontier has {len(levels)} levels, expected {HEIGHT + 1}")
+        if levels[HEIGHT] is not None:
+            raise ValueError("outputs frontier of a full tree")
+        tree = cls()
+        for level, node in enumerate(levels[:HEIGHT]):
+            if node is not None:
+                if len(node) != 32:
+                    raise ValueError(f"outputs frontier level {level} is not a 32-byte hash")
+                tree.count |= 1 << level
+                tree._state[level] = node
+        return tree
+
+    def to_frontier(self) -> list[bytes | None]:
+        return [self._state[level] if self.count >> level & 1 else None for level in range(HEIGHT)] + [None]
+
     def root(self) -> bytes:
         node = _PRISTINE[0]
         for level in range(HEIGHT):
@@ -130,6 +154,35 @@ class OutputsTree:
             else:
                 node = keccak256(node + _PRISTINE[level])
         return node
+
+
+def load_frontier(path) -> OutputsTree:
+    """Read an outputs-frontier.json (a JSON array of base64 hashes or false, lowest level first)."""
+    import base64
+    import json
+    from pathlib import Path
+
+    levels = []
+    for entry in json.loads(Path(path).read_text()):
+        if entry is False or entry is None:
+            levels.append(None)
+        elif isinstance(entry, str) and entry.lower().startswith("0x"):
+            levels.append(bytes.fromhex(entry[2:]))
+        elif isinstance(entry, str):
+            levels.append(base64.b64decode(entry, validate=True))
+        else:
+            raise ValueError(f"{path}: unexpected frontier entry {entry!r}")
+    return OutputsTree.from_frontier(levels)
+
+
+def store_frontier(tree: OutputsTree, path) -> None:
+    """Write a tree's frontier the way hash_tree.frontier_store does (used to build test checkpoints)."""
+    import base64
+    import json
+    from pathlib import Path
+
+    levels = [base64.b64encode(h).decode() if h else False for h in tree.to_frontier()]
+    Path(path).write_text(json.dumps(levels, indent=2) + "\n")
 
 
 def outputs_root(outputs: list[bytes]) -> bytes:

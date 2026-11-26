@@ -6,6 +6,9 @@
     micronode compare compare a run with the machine hashes a rollups-node recorded
     micronode check   fetch + run + compare in one go
     micronode watch   follow the app: new finalized inputs, advance, compare, alert
+    micronode from-checkpoint
+                      replay up to input K from crisium's newest anchored checkpoint, checked
+                      against EpochSealed/EpochStaged and, optionally, the node
 
 Exit codes of run/compare/check (run only uses 0 and 5):
   0 all well
@@ -440,6 +443,36 @@ def cmd_watch(args) -> int:
     return run_watch(cfg, args.interval, once=args.once)
 
 
+# --- from-checkpoint -----------------------------------------------------
+
+
+def cmd_from_checkpoint(args) -> int:
+    from .epoch import Config, run_from_checkpoint
+
+    if not args.native and not args.image:
+        sys.exit("--image is required (an emulator 0.23 image, e.g. crisium-sentinel:local), or use --native")
+    if args.volume and not args.image:
+        sys.exit("--volume needs --image (the copy runs in a container that mounts the volume read-only)")
+    if args.to is None and args.epoch is None:
+        sys.exit("give --to K, --epoch N, or both")
+    return run_from_checkpoint(Config(
+        dir=Path(args.dir),
+        checkpoints=args.checkpoints,
+        rpc=args.rpc,
+        app=args.app,
+        image=args.image,
+        native=args.native,
+        epoch=args.epoch,
+        to=args.to,
+        volume=args.volume,
+        unanchored_latest=args.unanchored_latest,
+        node=args.node,
+        node_app=args.node_app,
+        from_block=args.from_block,
+        to_block=args.to_block,
+    ))
+
+
 # --- show ----------------------------------------------------------------
 
 
@@ -553,7 +586,43 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--alert-webhook", help="URL that gets a JSON POST {\"text\": ...} per alert (Slack-compatible)")
     p.add_argument("--label", help="how alerts name the app (default: --app)")
     p.set_defaults(func=cmd_watch)
+
+    _add_from_checkpoint(sub)
     return parser
+
+
+def _add_from_checkpoint(sub) -> None:
+    p = sub.add_parser(
+        "from-checkpoint",
+        help="replay up to input K from crisium's newest anchored checkpoint (exit codes: see above)",
+        description="Picks the checkpoint to start from (the epoch holding K if it is sealed, else the newest "
+        "sealed epoch, replayed into the open one), copies it from crisium's read-only directory, checks it "
+        "against EpochSealed, replays the inputs from the InputBox up to K on emulator 0.23, and checks the "
+        "per-input hashes (against --node), the outputs roots (declared vs recomputed) and the end of every "
+        "sealed epoch it finished against EpochStaged and the next EpochSealed.",
+    )
+    p.add_argument("--dir", required=True, help="work directory (gets the checkpoint copy, inputs, run.json)")
+    p.add_argument("--checkpoints", required=True,
+                   help="crisium's checkpoints directory, which must be read-only for the micronode (a :ro "
+                   "mount); with --volume, its path inside the volume (e.g. /checkpoints)")
+    p.add_argument("--volume", help="Docker volume holding crisium's data; mounted read-only to copy from")
+    p.add_argument("--to", type=int, help="last input to replay, a global input index")
+    p.add_argument("--epoch", type=int, help="the checkpoint to start from (default: chosen from --to); "
+                   "without --to the whole epoch is replayed")
+    p.add_argument("--unanchored-latest", action="store_true",
+                   help="for an input of the open epoch: start from the open epoch's checkpoint, which only "
+                   "crisium vouches for (cross-checked against EpochStaged and --node), instead of replaying "
+                   "the sealed epoch before it")
+    p.add_argument("--rpc", required=True, help="Ethereum JSON-RPC URL")
+    p.add_argument("--app", required=True, help="application contract address")
+    p.add_argument("--image", help="emulator 0.23 Docker image with cartesi-machine (entrypoint is overridden)")
+    p.add_argument("--native", action="store_true", help="use cartesi-machine from PATH instead of Docker")
+    p.add_argument("--node", help="rollups-node JSON-RPC URL: compare per-input machine hashes too")
+    p.add_argument("--node-app", help="the application's name in the node (default: --app)")
+    p.add_argument("--from-block", type=_int, help="first block to scan for events (default: the consensus's "
+                   "deployment block)")
+    p.add_argument("--to-block", default="finalized", help="last block to read (default: %(default)s)")
+    p.set_defaults(func=cmd_from_checkpoint)
 
 
 def main(argv: list[str] | None = None) -> int:

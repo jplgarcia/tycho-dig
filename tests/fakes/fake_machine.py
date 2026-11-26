@@ -8,8 +8,9 @@ The input payload drives it (the bytes of input-N.bin are searched):
 
 State hash model: H(template) = keccak("template"); accept: keccak(prev || input); reject: prev.
 --load reads a stored machine (state.json) or, for the template, starts at H(template).
---store writes state.json with the hash and the outputs so far. Every call is logged to
-FAKE_CALLS (one JSON line: begin, end, load) so tests can check what was resumed from.
+--store writes state.json with the hash and the outputs so far. --initial-hash prints the loaded
+hash; begin_epoch/next_input_offset (0.23) and --clear-hash-tree are accepted. Every call is
+logged to FAKE_CALLS (one JSON line: begin, end, load, flags) so tests can check what ran.
 """
 
 import json
@@ -37,24 +38,36 @@ def model(prev: str, data: bytes) -> tuple[str, str, list[bytes]]:
 
 
 def main(args: list[str]) -> int:
+    v023 = os.environ.get("FAKE_EMULATOR") == "0.23"  # else it looks like 0.21
     if "--help" in args:
-        print("input_index_begin:<number>\ncheck_outputs_merkle_root:<boolean>\n  --remote-shutdown")
+        if v023:
+            print("input_file_index_begin:<number>\ncheck_outputs_merkle_root:<boolean>\n  --remote-shutdown\n"
+                  "begin_epoch:<boolean>\nnext_input_offset:<number>")
+        else:
+            print("input_index_begin:<number>\ncheck_outputs_merkle_root:<boolean>\n  --remote-shutdown")
         return 0
     if "--version" in args:
-        print("cartesi-machine 0.21.0")
+        print("cartesi-machine 0.23.0" if v023 else "cartesi-machine 0.21.0")
         return 0
     opts = dict(a.split("=", 1) for a in args if a.startswith("--") and "=" in a)
     adv = dict(kv.split(":", 1) for kv in opts["--cmio-advance-state"].split(",") if ":" in kv)
-    begin, end = int(adv["input_index_begin"]), int(adv["input_index_end"])
+    key = "input_file_index" if v023 else "input_index"
+    begin, end = int(adv[f"{key}_begin"]), int(adv[f"{key}_end"])
     load = Path(opts["--load"])
     with open(os.environ["FAKE_CALLS"], "a") as f:
-        f.write(json.dumps({"begin": begin, "end": end, "load": str(load)}) + "\n")
+        call = {"begin": begin, "end": end, "load": str(load)}
+        if "begin_epoch" in adv:  # an epoch-start run (0.23): log how it was asked to run
+            call["flags"] = [a for a in args if a in ("--clear-hash-tree", "--initial-hash")]
+            call.update({k: adv[k] for k in ("begin_epoch", "next_input_offset", "check_outputs_merkle_root")})
+        f.write(json.dumps(call) + "\n")
     saved = load / "state.json"
     if saved.exists():
         st = json.loads(saved.read_text())
     else:
         st = {"hash": TEMPLATE_HASH, "outputs": []}
     log = sys.stderr
+    if "--initial-hash" in args:
+        print(f"0: {st['hash']}", file=log)
     print("Manual yield rx-accepted (1) (0x000020 data)", file=log)  # where the loaded machine sits
     out_index = 0  # without last_output_proof the CLI numbers this run's outputs from 0
     h, outputs = st["hash"], [bytes.fromhex(o) for o in st["outputs"]]

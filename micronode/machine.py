@@ -57,6 +57,8 @@ class RunResult:
     emulator_version: str | None = None
     # input at which the CLI's own root check stopped the run (only with a CLI that cannot turn it off)
     cli_root_check_stop: int | None = None
+    # state hash of the loaded machine, printed by --initial-hash before anything runs
+    loaded_hash: str | None = None
 
     @property
     def initial_hash(self) -> str | None:
@@ -81,9 +83,11 @@ def parse_run_log(text: str) -> RunResult:
     current: InputResult | None = None
     pending: list[str] = []
     extra: list[str] = []  # hashes printed after the last input's pair (--final-hash)
+    started = False  # a "Before input" line was seen
     for line in lines:
         m = _BEFORE_RE.match(line)
         if m:
+            started = True
             current = None
             pending = [m.group(1)]
             extra = []
@@ -101,6 +105,8 @@ def parse_run_log(text: str) -> RunResult:
                     result.inputs.append(current)
                     pending = []
             else:
+                if not started and result.loaded_hash is None:
+                    result.loaded_hash = m.group(2)  # --initial-hash
                 extra.append(m.group(2))
             continue
         m = _YIELD_RE.match(line)
@@ -109,6 +115,8 @@ def parse_run_log(text: str) -> RunResult:
     if result.inputs and extra:
         result.final_hash = extra[-1]
         result.inputs[-1].hash_after = extra[-1]
+    elif not started and extra:
+        result.final_hash = extra[-1]  # no input ran: the final hash is the loaded machine's
     m = _CLI_ROOT_MISMATCH_RE.search(text)
     if m:
         result.cli_root_check_stop = int(m.group(1))
@@ -161,6 +169,7 @@ class Caps:
     version: str | None = None
     root_check_option: bool = False  # check_outputs_merkle_root:<bool>
     remote_shutdown: bool = False  # --remote-shutdown
+    epoch: bool = False  # begin_epoch / next_input_offset (emulator >= 0.23)
 
 
 def _cli_args(
@@ -172,6 +181,9 @@ def _cli_args(
     root_check_option: bool = False,
     remote_shutdown: bool = False,
     store: str | None = None,
+    epoch_start: bool = False,
+    clear_hash_tree: bool = False,
+    initial_hash: bool = False,
 ) -> list[str]:
     # emulator 0.21 names the range input_index_begin/end; 0.22 input_file_index_begin/end
     key = "input_index" if legacy else "input_file_index"
@@ -186,6 +198,10 @@ def _cli_args(
         "output_proof:",
         "outputs_merkle_root_proof:",
     ]
+    if epoch_start:
+        # emulator 0.23: the loaded machine is at an epoch boundary (a crisium checkpoint); the
+        # epoch's first input has offset 0 while the input files keep their global indices
+        advance += ["begin_epoch:true", "next_input_offset:0"]
     if root_check_option:
         # the micronode checks the root itself (verify_outputs_roots): a mismatch is a detection to
         # report, and the replay goes on so the machine hashes of later inputs can still be compared
@@ -196,6 +212,12 @@ def _cli_args(
         f"--load={template}",
         f"--cmio-advance-state={','.join(advance)}",
     ]
+    if clear_hash_tree:
+        # a machine stored by someone else: its cached hash-tree data is outside the state
+        # hash and not checked on load, so rebuild it instead of trusting it
+        args.append("--clear-hash-tree")
+    if initial_hash:
+        args.append("--initial-hash")
     if final_hash:
         args.append("--final-hash")
     if remote_shutdown:
@@ -214,6 +236,7 @@ def _probe(prefix: list[str]) -> Caps:
         legacy="input_file_index_begin" not in help_text and "input_index_begin" in help_text,
         root_check_option="check_outputs_merkle_root" in help_text,
         remote_shutdown="--remote-shutdown" in help_text,
+        epoch="begin_epoch:" in help_text and "next_input_offset:" in help_text,
     )
     proc = subprocess.run([*prefix, "--version"], capture_output=True, text=True)
     first = (proc.stdout + proc.stderr).strip().splitlines()
@@ -268,12 +291,16 @@ def run(
     native: bool = False,
     store: Path | None = None,
     need_root_check_option: bool = False,
+    epoch_start: bool = False,
 ) -> RunResult:
     """Advance input files ``workdir/input-<begin..end-1>.bin`` from a stored machine.
 
     ``template`` is the machine to load: the application's template for a replay
     from input 0, or a machine stored by an earlier run (``store``) to resume at
-    ``begin``. ``store``, if given, must be inside ``workdir``. ``native`` uses a
+    ``begin``. With ``epoch_start`` it is a machine at an epoch boundary stored by
+    someone else (a crisium checkpoint, emulator >= 0.23): the run starts a new epoch
+    at ``begin``, rebuilds the machine's hash tree, prints the loaded state hash
+    (``RunResult.loaded_hash``) and never uses the CLI's own root check. ``store``, if given, must be inside ``workdir``. ``native`` uses a
     ``cartesi-machine`` on PATH; otherwise the CLI runs in a throwaway Docker
     container with ``workdir`` mounted and the template mounted read-only.
     """
@@ -312,9 +339,20 @@ def run(
             image,
         ]
         cwd = None
-    if need_root_check_option and not caps.root_check_option:
+    if (need_root_check_option or epoch_start) and not caps.root_check_option:
         raise RuntimeError(f"cartesi-machine {caps.version} cannot turn off check_outputs_merkle_root")
-    cmd = [*prefix, *_cli_args(begin, end, load, True, caps.legacy, caps.root_check_option, caps.remote_shutdown, store_arg)]
+    if epoch_start and not caps.epoch:
+        raise RuntimeError(
+            f"cartesi-machine {caps.version} has no begin_epoch/next_input_offset: starting from a "
+            "crisium checkpoint needs emulator 0.23 (the version that stored it)"
+        )
+    cmd = [
+        *prefix,
+        *_cli_args(
+            begin, end, load, True, caps.legacy, caps.root_check_option, caps.remote_shutdown, store_arg,
+            epoch_start=epoch_start, clear_hash_tree=epoch_start, initial_hash=epoch_start,
+        ),
+    ]
     proc = _execute(cmd, cwd, container)
     text = proc.stdout + proc.stderr
     result = parse_run_log(text)

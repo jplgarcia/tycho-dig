@@ -83,6 +83,60 @@ micronode watch --dir watch-state \
 
 Everything is kept in `--dir`, so a restarted watcher resumes where it stopped and does not resend alarms it already sent: inputs, per-input results, the outputs tree, the stored machine and the alarms. Two watchers cannot share a directory. `--once` runs one tick and exits with the code of the standing alarms, which is useful from cron.
 
+### Replay up to input K from crisium's checkpoint
+
+`watch` and `check` replay from input 0, so their cost grows with the app's whole history. When crisium already runs as a sentinel, its checkpoints let the micronode replay at most about one epoch, on demand (per epoch or per alarm), and keep no state of its own:
+
+```bash
+# crisium's data in a Docker volume: the micronode mounts it read-only itself
+micronode from-checkpoint --dir run-k5 --to 5 \
+  --volume <crisium's data volume> --checkpoints /checkpoints \
+  --rpc https://<an Ethereum RPC> --app <application address> \
+  --image <an emulator 0.23 image with cartesi-machine> \
+  --node http://localhost:10011/rpc --node-app <app name in the node>
+
+# crisium's data on a host path, which must be mounted read-only for the micronode
+micronode from-checkpoint --dir run-epoch-2 --epoch 2 --checkpoints /crisium/checkpoints ...
+```
+
+**Requirement: crisium's data is read-only for the micronode.** The OS enforces this, not only the micronode's code. `--volume` mounts the volume `:ro` in the container that copies the checkpoint out. A host `--checkpoints` directory must be a read-only mount, for example `-v <volume>:/crisium:ro` when the micronode runs in a container. The micronode refuses a checkpoint it could write to. Only the copy in `--dir` is ever loaded, which also matters because crisium deletes old checkpoints (`--keep-epochs=1`).
+
+**crisium's checkpoints.** crisium (machine-emulator 0.23, `doc/recipes/prt-stored-player.lua`) writes `checkpoints/epoch-N/` as soon as it has computed epoch N-1. The folder holds the machine epoch N starts from, plus `epoch.json` (`final_state_hash` is that start state) and `outputs-frontier.json` (the outputs tree since genesis).
+
+At any moment epoch N-1 is accepted, N is sealed (its dispute runs) and N+1 is open. `DaveConsensus` seals N+1 only once N is accepted. So two kinds of checkpoint exist:
+
+| Checkpoint | Its machine | Anchored by |
+|---|---|---|
+| `epoch-N` (sealed epoch) | N-1's accepted end | the chain: `EpochSealed(N).initialMachineStateHash` and outputs root |
+| `epoch-(N+1)` (open epoch) | N's end as crisium computed it | crisium only, until N is accepted; cross-checked against `EpochStaged(N)` once staged, and against the node's hash for N's last input |
+
+**Which checkpoint it starts from.** It picks the newest anchored checkpoint at or below `K`:
+
+- **`K` in a sealed epoch:** starts from that epoch's checkpoint.
+- **`K` in the open epoch:** starts from the sealed epoch before it and replays through it into the open one. That costs two epochs but stays anchored on chain.
+- **`--unanchored-latest`:** starts from the open epoch's checkpoint instead. The output says the start is anchored only by crisium, and reports whether it matches `EpochStaged(N)` and the node. A disagreement refuses to run (exit 4).
+- **`--epoch N`:** picks the checkpoint explicitly. Without `--to`, it replays the whole epoch.
+
+A start hash is never reported as anchored unless it matched an on-chain value.
+
+The command takes these steps:
+
+1. **Chain:** reads every `EpochSealed`/`EpochStaged` of the application's `DaveConsensus`, up to `--to-block` (default `finalized`).
+2. **Checkpoint check:** copies the checkpoint, then checks the copy:
+   - `epoch.json` against its own frontier;
+   - the start state and outputs root against the anchor (or the cross-checks);
+   - the loaded machine's own state hash (`--initial-hash`, after `--clear-hash-tree` rebuilds a hash tree we did not produce).
+
+   If any differs, it is a setup mismatch (exit 4) and nothing is compared.
+3. **Inputs:** reads the inputs from the start epoch's first input to `K` from the InputBox.
+4. **Replay:** runs `cartesi-machine` with `begin_epoch:true,next_input_offset:0` over the global input file indices, with `check_outputs_merkle_root:false`. It continues the outputs tree itself from `outputs-frontier.json`. The CLI would need `last_output_proof` for that, which crisium does not store.
+5. **Compare:**
+   - every input's outcome, machine hash and outputs root, declared and recomputed (exit 5 on a mismatch);
+   - with `--node`, the node's `machine_hash` for each replayed input (exit 2);
+   - for every sealed epoch the replay finished, its end state and outputs root against `EpochStaged` and the next `EpochSealed` (exit 2).
+
+`run.json` in `--dir` keeps every check, the events, the per-input results and the timings. It needs emulator 0.23, the version that stored the checkpoint. An older CLI is refused, because it has no `begin_epoch`.
+
 ### Exit codes and alarms
 
 `check` and `compare` exit with one of these codes:
