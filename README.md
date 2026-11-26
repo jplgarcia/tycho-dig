@@ -101,6 +101,62 @@ tycho-dig from-checkpoint --dir run-epoch-2 --epoch 2 --checkpoints /crisium/che
 
 **Requirement: crisium's data is read-only for tycho-dig.** The OS enforces this, not only tycho-dig's code. `--volume` mounts the volume `:ro` in the container that copies the checkpoint out. A host `--checkpoints` directory must be a read-only mount, for example `-v <volume>:/crisium:ro` when tycho-dig runs in a container. tycho-dig refuses a checkpoint it could write to. Only the copy in `--dir` is ever loaded, which also matters because crisium deletes old checkpoints (`--keep-epochs=1`).
 
+#### Tip: how to give tycho-dig crisium's data read-only
+
+Some rules apply to every setup:
+
+- **Who can read the files:** crisium creates `epoch.json` and `outputs-frontier.json` readable by its own user only (mode 600). The emulator's `write_durable_file` creates them with `mkostemp` and keeps that mode. So read them as crisium's user (uid 999 in `crisium-sentinel`) or as root. On a read-only mount, root cannot write either.
+- **No separate read-only user:** a separate user with read-only permissions cannot read those files.
+- **No `chmod`:** never `chmod` crisium's own directory, because crisium must keep writing there.
+- **The check:** `touch` inside the read-only view must fail with `Read-only file system`. tycho-dig also refuses on its own any source it could write to.
+
+**crisium-sentinel with Docker Compose.** The service is `sentinel`, and its named volume `data` is mounted at `/data`. The volume's real name is `<project>_data`; the project name defaults to the folder's name. The simple path is `--volume`, which mounts the volume `:ro` itself:
+
+```bash
+docker volume ls | grep _data      # e.g. crisium-sentinel_data
+tycho-dig from-checkpoint --volume crisium-sentinel_data --checkpoints /checkpoints ...
+docker run --rm -v crisium-sentinel_data:/crisium:ro --entrypoint touch crisium-sentinel:local /crisium/x
+# touch: cannot touch '/crisium/x': Read-only file system
+```
+
+Or add tycho-dig as a service in the same `compose.yaml`, then run it with `--native --checkpoints /crisium/checkpoints`:
+
+```yaml
+  tycho-dig:
+    image: <an image with python3, tycho-dig and cartesi-machine 0.23>
+    profiles: [tools]
+    user: "0:0"            # or crisium's uid; any other user cannot read epoch.json
+    volumes:
+      - data:/crisium:ro
+```
+
+```bash
+docker compose run --rm --entrypoint touch tycho-dig /crisium/x   # Read-only file system
+```
+
+**A plain `docker run`.** Mount the volume (or a host folder) with `-v <volume>:/crisium:ro` and pass `--checkpoints /crisium/checkpoints`. Check it with the same `touch`.
+
+**crisium writing to a host folder.**
+
+- **Linux:** make a read-only bind mount, and run tycho-dig against it as crisium's user or as root. This recipe was not run on the macOS machine where the others were checked:
+
+  ```bash
+  sudo mkdir -p /srv/crisium-ro
+  sudo mount --bind <crisium's data folder> /srv/crisium-ro
+  sudo mount -o remount,ro,bind /srv/crisium-ro
+  touch /srv/crisium-ro/x            # touch: cannot touch '/srv/crisium-ro/x': Read-only file system
+  tycho-dig from-checkpoint --checkpoints /srv/crisium-ro/checkpoints ...
+  ```
+
+- **macOS:** bind remounts are Linux-only, so run tycho-dig in a container with `-v <crisium's data folder>:/crisium:ro`.
+
+The Docker recipes were checked on macOS (Docker Desktop, engine 27.5), using a stand-in compose project with the sentinel's service and volume layout:
+
+- the `:ro` mount refused writes, root included;
+- `--volume` copied a mode-600 `epoch.json`;
+- a uid other than root or crisium's got `Permission denied` reading it;
+- tycho-dig refused a writable host folder.
+
 **crisium's checkpoints.** crisium (machine-emulator 0.23, `doc/recipes/prt-stored-player.lua`) writes `checkpoints/epoch-N/` as soon as it has computed epoch N-1. The folder holds the machine epoch N starts from, plus `epoch.json` (`final_state_hash` is that start state) and `outputs-frontier.json` (the outputs tree since genesis).
 
 At any moment epoch N-1 is accepted, N is sealed (its dispute runs) and N+1 is open. `DaveConsensus` seals N+1 only once N is accepted. So two kinds of checkpoint exist:
