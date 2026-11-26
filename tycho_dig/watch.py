@@ -1,10 +1,10 @@
-"""micronode watch: follow an application and raise alerts when the node and the micronode disagree.
+"""tycho-dig watch: follow an application and raise alerts when the node and tycho-dig disagree.
 
 Every tick:
 
 1. reads the new InputAdded events from the InputBox, up to the finalized block, through
    an Ethereum RPC of our choosing (not the node's);
-2. advances the micronode's machine through the new inputs with the cartesi-machine CLI,
+2. advances tycho-dig's machine through the new inputs with the cartesi-machine CLI,
    resuming from the machine it stored at the end of the previous tick;
 3. compares the machine hash after every input with the node's (cartesi_listInputs), and
    checks the outputs roots, the node's status and its progress;
@@ -70,7 +70,7 @@ class State:
     replayed: list[dict] = field(default_factory=list)  # per-input results, in index order
     tree: dict | None = None  # outputs tree after the last replayed input
     last_hash: str | None = None  # state hash of the stored machine
-    blocked: str | None = None  # why the micronode stopped advancing (setup mismatch, exception)
+    blocked: str | None = None  # why tycho-dig stopped advancing (setup mismatch, exception)
     raised: dict[str, str] = field(default_factory=dict)  # alarm key -> message already sent
     failures: int = 0  # consecutive ticks that failed
     last_error: str | None = None
@@ -150,7 +150,7 @@ def advance(cfg: Config, st: State, alarms: dict[str, str]) -> None:
     if begin == 0:
         if st.template_hash and first != st.template_hash:
             st.blocked = (
-                f"SETUP MISMATCH: the micronode's template state hash {first} is not the application's "
+                f"SETUP MISMATCH: tycho-dig's template state hash {first} is not the application's "
                 f"{st.template_hash} (emulator {result.emulator_version}): another emulator version or "
                 f"template. Nothing compared; restart with the application's template and version."
             )
@@ -192,7 +192,7 @@ def compare(cfg: Config, st: State, alarms: dict[str, str]) -> None:
         node_hash = theirs.get(item["index"])
         if node_hash is not None and node_hash != (item["hash_after"] or "").lower():
             alarms[f"divergence:{item['index']}"] = (
-                f"DIVERGENCE at input {item['index']}: micronode {item['hash_after']}, node {node_hash}"
+                f"DIVERGENCE at input {item['index']}: tycho-dig {item['hash_after']}, node {node_hash}"
             )
             break  # every later input diverges too; the first one is what matters
     for item in st.replayed:
@@ -225,11 +225,11 @@ def _now() -> str:
 def notify(cfg: Config, kind: str, key: str, message: str) -> None:
     """Print the alert and send it through --alert-cmd and --alert-webhook."""
     label = cfg.label or cfg.app
-    text = f"[micronode {label}] {kind} {key}: {message}"
+    text = f"[tycho-dig {label}] {kind} {key}: {message}"
     print(f"{_now()} {kind} {key}: {message}", flush=True)
     if cfg.alert_cmd:
-        env = {**os.environ, "MICRONODE_ALERT_KIND": kind, "MICRONODE_ALERT_KEY": key,
-               "MICRONODE_ALERT_APP": label, "MICRONODE_ALERT_TEXT": text}
+        env = {**os.environ, "TYCHO_DIG_ALERT_KIND": kind, "TYCHO_DIG_ALERT_KEY": key,
+               "TYCHO_DIG_ALERT_APP": label, "TYCHO_DIG_ALERT_TEXT": text}
         try:
             subprocess.run(cfg.alert_cmd, shell=True, input=text, text=True, env=env, timeout=60)
         except Exception as exc:  # an alert channel failing must not stop the watcher
@@ -269,12 +269,12 @@ def tick(cfg: Config, st: State) -> dict[str, str]:
         st.failures += 1
         st.last_error = f"{type(exc).__name__}: {exc}"
         print(f"{_now()} tick failed ({st.failures} in a row): {st.last_error}", file=sys.stderr, flush=True)
-        if os.environ.get("MICRONODE_DEBUG"):
+        if os.environ.get("TYCHO_DIG_DEBUG"):
             traceback.print_exc()
         # what was standing still stands: a failed tick does not resolve anything
         alarms = {k: v for k, v in st.raised.items() if k != "watcher"}
         if st.failures >= FAILURES_BEFORE_ALERT:
-            alarms["watcher"] = f"the micronode could not check for {st.failures} ticks: {st.last_error}"
+            alarms["watcher"] = f"tycho-dig could not check for {st.failures} ticks: {st.last_error}"
     publish(cfg, st, alarms)
     return alarms
 
@@ -309,7 +309,7 @@ def run_watch(cfg: Config, interval: float, once: bool = False) -> int:
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        sys.exit(f"another micronode watch is using {cfg.dir}")
+        sys.exit(f"another tycho-dig watch is using {cfg.dir}")
     path = cfg.dir / STATE_FILE
     st = State.load(path)
     if st.app_address:

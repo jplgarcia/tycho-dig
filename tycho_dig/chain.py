@@ -50,7 +50,7 @@ def fetch_inputs(
     Reads the chain directly, without going through any node, so a node that
     skipped, reordered or altered an input does not affect what we replay.
     ``to_block`` defaults to the finalized block: reading below finality would
-    make the micronode itself raise false alarms on a reorg.
+    make tycho-dig itself raise false alarms on a reorg.
     """
     to_block = resolve_block(eth_rpc, to_block)
     for log in get_logs(eth_rpc, inputbox, [INPUT_ADDED_TOPIC, _topic_address(app)], from_block, to_block, chunk):

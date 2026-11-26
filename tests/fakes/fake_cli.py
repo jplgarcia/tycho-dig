@@ -78,7 +78,7 @@ def cli(args: list[str], workdir: Path) -> int:
 
 def _good_root(index: int) -> bytes:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from micronode.outputs import outputs_root
+    from tycho_dig.outputs import outputs_root
 
     names = [n for i in range(index + 1) for n in OUTPUTS[i]]
     return outputs_root([(Path(os.environ["FAKE_OUTPUTS"]) / n).read_bytes() for n in names])

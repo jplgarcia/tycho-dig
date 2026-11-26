@@ -13,9 +13,9 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from micronode import chain, cli
-from micronode.evm import INPUT_ADDED_TOPIC, EvmAdvance, encode_bytes, encode_evm_advance
-from micronode.outputs import OutputsTree, keccak256, load_frontier, store_frontier
+from tycho_dig import chain, cli
+from tycho_dig.evm import INPUT_ADDED_TOPIC, EvmAdvance, encode_bytes, encode_evm_advance
+from tycho_dig.outputs import OutputsTree, keccak256, load_frontier, store_frontier
 
 sys.path.insert(0, str(Path(__file__).parent / "fakes"))
 import fake_machine  # noqa: E402
@@ -229,7 +229,7 @@ class FromCheckpointTest(unittest.TestCase):
         self.url = f"http://127.0.0.1:{server.server_port}"
 
     def crisium_stores(self, *epochs, tamper=None):
-        """crisium's checkpoints directory, read-only for the micronode, as a :ro mount makes it."""
+        """crisium's checkpoints directory, read-only for tycho-dig, as a :ro mount makes it."""
         set_read_only(self.crisium, False)
         for e in epochs:
             if not (self.crisium / f"epoch-{e}").exists():
@@ -334,7 +334,7 @@ class FromCheckpointTest(unittest.TestCase):
     def test_writable_crisium_directory_is_refused(self):
         self.crisium_stores(2)
         set_read_only(self.crisium, False)
-        with self.assertRaisesRegex(RuntimeError, "writable by the micronode"):
+        with self.assertRaisesRegex(RuntimeError, "writable by tycho-dig"):
             self.run_mode("--to", 3)
 
     def test_checkpoint_of_another_state_refuses(self):

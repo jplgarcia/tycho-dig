@@ -11,9 +11,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import StringIO
 from pathlib import Path
 
-from micronode import cli
-from micronode.evm import EvmAdvance, decode_abi_bytes, decode_evm_advance, encode_bytes, encode_evm_advance
-from micronode.machine import parse_run_log
+from tycho_dig import cli
+from tycho_dig.evm import EvmAdvance, decode_abi_bytes, decode_evm_advance, encode_bytes, encode_evm_advance
+from tycho_dig.machine import parse_run_log
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -75,7 +75,7 @@ class ParseTest(unittest.TestCase):
 
 
 # Machine hash after each input, as the rollups-node a13 recorded it for the tester app on a
-# live stack (cartesi_listInputs, 2026-11-05). The micronode run below matched all eight.
+# live stack (cartesi_listInputs, 2026-11-05). tycho-dig run below matched all eight.
 TESTER_NODE = [
     ("rx-accepted", "0x660d8a75f21c7c9cf9a4fa94a704595b49c9306cdb2b389ad27fc505472a85d7"),
     ("rx-rejected", "0x660d8a75f21c7c9cf9a4fa94a704595b49c9306cdb2b389ad27fc505472a85d7"),
@@ -102,7 +102,7 @@ class TesterLogTest(unittest.TestCase):
 
 class CliArgsTest(unittest.TestCase):
     def test_range_keys_by_version(self):
-        from micronode.machine import _cli_args
+        from tycho_dig.machine import _cli_args
 
         self.assertIn("input_file_index_begin:0", _cli_args(0, 3, "/t", True)[3])
         self.assertIn("input_index_end:3", _cli_args(0, 3, "/t", True, legacy=True)[3])
@@ -179,7 +179,7 @@ class CompareTest(NodeTestBase):
         self.assertIn("template matches", out)
 
     def test_template_mismatch_refuses(self):
-        # e.g. a micronode on 0.23 (new MIMPID) against an app deployed with a 0.22 template:
+        # e.g. a tycho-dig on 0.23 (new MIMPID) against an app deployed with a 0.22 template:
         # every hash differs, so it must not be reported as a divergence
         code, out = self._compare(
             ["0x" + "cd" * 32] * 3, app={"template_hash": "0x" + "11" * 32}, initial_hash="0x" + "22" * 32
@@ -238,13 +238,13 @@ RT1_OUTPUTS = ["out-0-0.bin", "out-1-1.bin", "out-1-2.bin"]
 
 class OutputsRootTest(unittest.TestCase):
     def test_keccak_implementations_agree(self):
-        from micronode import outputs
+        from tycho_dig import outputs
 
         for data in (b"", b"abc", bytes(range(256)) * 3):
             self.assertEqual(outputs.keccak256(data), outputs.keccak256_py(data))
 
     def test_rt1_roots(self):
-        from micronode.outputs import outputs_root
+        from tycho_dig.outputs import outputs_root
 
         blobs = [(RT1 / "machine-wrong" / n).read_bytes() for n in RT1_OUTPUTS]
         self.assertEqual("0x" + outputs_root(blobs[:1]).hex(), GOOD_ROOT_0)
@@ -253,9 +253,9 @@ class OutputsRootTest(unittest.TestCase):
         self.assertEqual("0x" + (RT1 / "control" / "root-1.bin").read_bytes().hex(), GOOD_ROOT_1)
 
     def test_real_cli_run(self):
-        # micronode run on the RT-1 inputs with the real 0.21.0 CLI (rollups-node a13 image), root
+        # tycho-dig run on the RT-1 inputs with the real 0.21.0 CLI (rollups-node a13 image), root
         # check off; the machine hashes are the ones the node recorded for app "root"
-        from micronode.machine import verify_outputs_roots
+        from tycho_dig.machine import verify_outputs_roots
 
         result = parse_run_log((RT1 / "machine-wrong" / "run-check-off.log").read_text())
         for item in result.inputs:
@@ -303,7 +303,7 @@ class FakeCliRun(unittest.TestCase):
         }
 
     def _run(self, native=True, **env):
-        from micronode import machine
+        from tycho_dig import machine
 
         with mock.patch.dict(os.environ, {**self.env, **env}):
             result = machine.run(Path(self.tmp.name), self.work, 0, 2, image="fake", native=native)
@@ -369,7 +369,7 @@ class FakeCliRun(unittest.TestCase):
     def test_docker_container_removed(self):
         result = self._run(native=False, FAKE_CAPS="check_option")
         self.assertEqual([i.index for i in result.outputs_root_mismatches], [1])
-        self.assertRegex(self.docker_log.read_text(), r"^rm -f micronode-[0-9a-f]{12}\n$")
+        self.assertRegex(self.docker_log.read_text(), r"^rm -f tycho-dig-[0-9a-f]{12}\n$")
         self.assert_server_gone()
 
     def test_stale_files_are_removed(self):
@@ -417,7 +417,7 @@ class OutputsRootCrossCheckTest(NodeTestBase):
         self.assertNotIn("machine wrong", out)
 
     def test_machine_wrong_without_node_flag(self):
-        # the node has not closed the epoch yet: the micronode alone already knows
+        # the node has not closed the epoch yet: tycho-dig alone already knows
         code, out = self._compare(AFTER[:2], inputs=_rt1_inputs(BAD_ROOT))
         self.assertEqual(code, cli.MACHINE_WRONG, out)
         self.assertNotIn("VERDICT", out)

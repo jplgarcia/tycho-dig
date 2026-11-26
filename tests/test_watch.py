@@ -10,9 +10,9 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-from micronode import cli
-from micronode.evm import INPUT_ADDED_TOPIC, EvmAdvance, encode_bytes, encode_evm_advance
-from micronode.watch import STATE_FILE, Config, run_watch
+from tycho_dig import cli
+from tycho_dig.evm import INPUT_ADDED_TOPIC, EvmAdvance, encode_bytes, encode_evm_advance
+from tycho_dig.watch import STATE_FILE, Config, run_watch
 
 sys.path.insert(0, str(Path(__file__).parent / "fakes"))
 import fake_machine  # noqa: E402
@@ -23,7 +23,7 @@ INPUTBOX = "0x" + "cd" * 20
 
 
 class World:
-    """A chain with an InputBox and a rollups-node, as far as the micronode sees them."""
+    """A chain with an InputBox and a rollups-node, as far as tycho-dig sees them."""
 
     def __init__(self):
         self.finalized = 0
@@ -230,7 +230,7 @@ class WatchTest(unittest.TestCase):
             self.tick()
         self.assertFalse(self.alert_lines())
         code, out = self.tick()
-        self.assertIn("ALERT watcher: the micronode could not check for 3 ticks", self.alerts.read_text())
+        self.assertIn("ALERT watcher: tycho-dig could not check for 3 ticks", self.alerts.read_text())
 
     def test_finalized_input_changed(self):
         w = self.world

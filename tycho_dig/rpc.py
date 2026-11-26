@@ -18,7 +18,7 @@ def call(url: str, method: str, params, timeout: float = 30.0):
     req = urllib.request.Request(
         url,
         data=body.encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "micronode"},
+        headers={"Content-Type": "application/json", "User-Agent": "tycho-dig"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         reply = json.loads(resp.read())

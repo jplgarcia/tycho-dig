@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from micronode.outputs import keccak256, outputs_root  # noqa: E402
+from tycho_dig.outputs import keccak256, outputs_root  # noqa: E402
 
 TEMPLATE_HASH = "0x" + keccak256(b"template").hex()
 

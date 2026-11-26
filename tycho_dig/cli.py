@@ -1,25 +1,25 @@
-"""micronode: replay Cartesi Rollups inputs on a bare machine and compare hashes.
+"""tycho-dig: replay Cartesi Rollups inputs on a bare machine and compare hashes.
 
-    micronode craft   build an input by hand (to simulate a situation)
-    micronode fetch   read the inputs of an application from the InputBox
-    micronode run     replay input files from the template, print per-input hashes
-    micronode compare compare a run with the machine hashes a rollups-node recorded
-    micronode check   fetch + run + compare in one go
-    micronode watch   follow the app: new finalized inputs, advance, compare, alert
-    micronode from-checkpoint
+    tycho-dig craft   build an input by hand (to simulate a situation)
+    tycho-dig fetch   read the inputs of an application from the InputBox
+    tycho-dig run     replay input files from the template, print per-input hashes
+    tycho-dig compare compare a run with the machine hashes a rollups-node recorded
+    tycho-dig check   fetch + run + compare in one go
+    tycho-dig watch   follow the app: new finalized inputs, advance, compare, alert
+    tycho-dig from-checkpoint
                       replay up to input K from crisium's newest anchored checkpoint, checked
                       against EpochSealed/EpochStaged and, optionally, the node
 
 Exit codes of run/compare/check (run only uses 0 and 5):
   0 all well
-  2 divergence: the node's machine hash differs from the micronode's
+  2 divergence: the node's machine hash differs from tycho-dig's
   3 the node stopped making progress (app status not OK, disabled, or a finalized
     input left unprocessed)
-  4 setup mismatch: the micronode's template state hash is not the application's
+  4 setup mismatch: tycho-dig's template state hash is not the application's
     (another emulator version or template), so nothing was compared
   5 machine wrong: the outputs root the machine declared at accept differs from the
     root of the outputs it emitted (recomputed here)
-  6 node wrong: the node's outputs root differs from the micronode's recomputed root
+  6 node wrong: the node's outputs root differs from tycho-dig's recomputed root
     while the machine's agrees
 When several fire, the first in the order 5, 6, 2, 3 decides the exit code.
 """
@@ -253,21 +253,21 @@ NODE_WRONG = 6
 
 
 def template_guard(initial_hash: str | None, expected: str | None, where: str, emulator: str | None) -> bool:
-    """True when the micronode ran the same machine the application was deployed with.
+    """True when tycho-dig ran the same machine the application was deployed with.
 
     A different emulator version (0.23 changes the default MIMPID, so every state
     hash changes) or a different template gives a different initial hash. Then
     every per-input hash differs with no bug anywhere, so we refuse to compare.
     """
     if not initial_hash or not expected:
-        print(f"warning: cannot verify the template ({where}: {expected}, micronode: {initial_hash})")
+        print(f"warning: cannot verify the template ({where}: {expected}, tycho-dig: {initial_hash})")
         return True
     if initial_hash.lower() == expected.lower():
         print(f"template matches {where} ({expected})")
         return True
     print(
-        f"SETUP MISMATCH: the micronode's template state hash {initial_hash} is not {where} {expected}.\n"
-        f"  The micronode (emulator {emulator or '?'}) is not running the application's machine: a different\n"
+        f"SETUP MISMATCH: tycho-dig's template state hash {initial_hash} is not {where} {expected}.\n"
+        f"  tycho-dig (emulator {emulator or '?'}) is not running the application's machine: a different\n"
         f"  emulator version (state hashes change across versions) or a different template. Not comparing;\n"
         f"  use the emulator version and template the application was deployed with."
     )
@@ -305,7 +305,7 @@ def node_root_crosscheck(node_rpc: str, app: str, info: dict, inputs: list[dict]
     upper = int(bound, 16) if isinstance(bound, str) else int(bound)
     replayed = {i["index"]: i for i in inputs}
     if any(index not in replayed for index in range(upper)):
-        print(f"cannot cross-check epoch {epoch} yet: the micronode has not replayed inputs 0..{upper - 1}")
+        print(f"cannot cross-check epoch {epoch} yet: tycho-dig has not replayed inputs 0..{upper - 1}")
         return None
     accepted = [replayed[i] for i in range(upper) if replayed[i].get("outcome") == "rx-accepted"]
     last = accepted[-1] if accepted else None
@@ -316,8 +316,8 @@ def node_root_crosscheck(node_rpc: str, app: str, info: dict, inputs: list[dict]
         f"outputs root cross-check, epoch {epoch} (inputs below {upper}; {where}):\n"
         f"  node      declared   {declared}\n"
         f"  node      calculated {calculated}\n"
-        f"  micronode machine    {ours_machine}\n"
-        f"  micronode recomputed {ours_independent}"
+        f"  tycho-dig machine    {ours_machine}\n"
+        f"  tycho-dig recomputed {ours_independent}"
     )
     node_wrong = calculated != ours_independent or declared != ours_machine
     machine_wrong = ours_machine != ours_independent
@@ -330,7 +330,7 @@ def node_root_crosscheck(node_rpc: str, app: str, info: dict, inputs: list[dict]
               "Fix the node; do not foreclose.")
         return NODE_WRONG
     if node_wrong and machine_wrong:
-        print("VERDICT: the machine and the node both disagree with the micronode: do not act on this check alone.")
+        print("VERDICT: the machine and the node both disagree with tycho-dig: do not act on this check alone.")
         return NODE_WRONG
     print("VERDICT: all agree; the node's INVALID_OUTPUTS_ROOT is not explained by this epoch's roots")
     return 0
@@ -374,10 +374,10 @@ def do_compare(
             if first_bad is None:
                 first_bad = index
         if status != "ok" or index == first_bad:
-            print(f"input {index}: {status}\n  micronode {mine}\n  node      {node_hash}")
+            print(f"input {index}: {status}\n  tycho-dig {mine}\n  node      {node_hash}")
     extra = sorted(set(theirs) - set(ours))
     if extra:
-        print(f"node has {len(extra)} inputs the micronode did not replay (from {extra[0]})")
+        print(f"node has {len(extra)} inputs tycho-dig did not replay (from {extra[0]})")
     for alarm in alarms:
         print(f"PROGRESS ALARM: {alarm}")
     _print_machine_wrong(machine_wrong)
@@ -523,7 +523,7 @@ def _add_lag(p) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="micronode", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(prog="tycho-dig", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("craft", help="write an EvmAdvance input file by hand")
@@ -582,7 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--interval", type=float, default=30, help="seconds between ticks (default %(default)s)")
     p.add_argument("--once", action="store_true", help="run one tick and exit with the alarm code")
     p.add_argument("--alert-cmd", help="shell command run for every alert and resolution; the text is on stdin "
-                   "and in MICRONODE_ALERT_TEXT (also MICRONODE_ALERT_KIND, _KEY, _APP)")
+                   "and in TYCHO_DIG_ALERT_TEXT (also TYCHO_DIG_ALERT_KIND, _KEY, _APP)")
     p.add_argument("--alert-webhook", help="URL that gets a JSON POST {\"text\": ...} per alert (Slack-compatible)")
     p.add_argument("--label", help="how alerts name the app (default: --app)")
     p.set_defaults(func=cmd_watch)
@@ -603,7 +603,7 @@ def _add_from_checkpoint(sub) -> None:
     )
     p.add_argument("--dir", required=True, help="work directory (gets the checkpoint copy, inputs, run.json)")
     p.add_argument("--checkpoints", required=True,
-                   help="crisium's checkpoints directory, which must be read-only for the micronode (a :ro "
+                   help="crisium's checkpoints directory, which must be read-only for tycho-dig (a :ro "
                    "mount); with --volume, its path inside the volume (e.g. /checkpoints)")
     p.add_argument("--volume", help="Docker volume holding crisium's data; mounted read-only to copy from")
     p.add_argument("--to", type=int, help="last input to replay, a global input index")

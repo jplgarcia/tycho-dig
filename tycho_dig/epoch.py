@@ -16,7 +16,7 @@ K if it is sealed, else the newest sealed epoch, replayed through into the open 
 ``unanchored_latest`` starts from the open epoch's checkpoint instead and says so.
 
 Nothing from crisium is trusted beyond that. crisium's directory must be read-only for the
-micronode (a ``:ro`` mount; a Docker volume is mounted read-only by the micronode itself), it is
+tycho-dig (a ``:ro`` mount; a Docker volume is mounted read-only by tycho-dig itself), it is
 copied into the work directory first (crisium deletes old checkpoints), and only the copy is loaded,
 with its hash tree rebuilt.
 """
@@ -69,9 +69,9 @@ class Report:
 
     def check(self, what: str, ours: str | None, theirs: str | None, kind: str) -> bool:
         ok = ours is not None and theirs is not None and ours.lower() == theirs.lower()
-        self.checks.append({"check": what, "ok": ok, "micronode": ours, "reference": theirs, "kind": kind})
+        self.checks.append({"check": what, "ok": ok, "tycho-dig": ours, "reference": theirs, "kind": kind})
         mark = "ok" if ok else kind.upper()
-        print(f"  [{mark}] {what}\n         micronode {ours}\n         reference {theirs}")
+        print(f"  [{mark}] {what}\n         tycho-dig {ours}\n         reference {theirs}")
         return ok
 
     def lap(self, name: str) -> None:
@@ -88,7 +88,7 @@ def assert_read_only(source: Path) -> None:
     writable = [p for p in [source, *source.iterdir()] if os.access(p, os.W_OK)]
     if writable:
         raise RuntimeError(
-            f"{source} is writable by the micronode ({writable[0].name}): mount crisium's data read-only "
+            f"{source} is writable by tycho-dig ({writable[0].name}): mount crisium's data read-only "
             "(e.g. -v <volume>:/crisium:ro) or pass --volume, which mounts it read-only"
         )
 

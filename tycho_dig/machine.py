@@ -203,7 +203,7 @@ def _cli_args(
         # epoch's first input has offset 0 while the input files keep their global indices
         advance += ["begin_epoch:true", "next_input_offset:0"]
     if root_check_option:
-        # the micronode checks the root itself (verify_outputs_roots): a mismatch is a detection to
+        # tycho-dig checks the root itself (verify_outputs_roots): a mismatch is a detection to
         # report, and the replay goes on so the machine hashes of later inputs can still be compared
         advance.append("check_outputs_merkle_root:false")
     args = [
@@ -322,7 +322,7 @@ def run(
         prefix, cwd, container = [exe], str(workdir), None
     else:
         caps = _probe(["docker", "run", "--rm", "--entrypoint", "cartesi-machine", image])
-        container = f"micronode-{uuid.uuid4().hex[:12]}"
+        container = f"tycho-dig-{uuid.uuid4().hex[:12]}"
         if workdir in template.parents:
             load, mounts = f"/work/{template.relative_to(workdir)}", []
         else:
