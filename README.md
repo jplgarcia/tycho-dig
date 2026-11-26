@@ -265,6 +265,31 @@ A test guest emitted its notices, then accepted input 1 with `0x5a...5a` in the 
 
 Before this, the CLI's own check stopped the replay with exit 1, the micronode crashed with a Python `RuntimeError`, and none of its alarms fired. The unit tests replay that run's files, and they also cover the "node wrong" case: a simulated node that drops the last output.
 
+### From crisium's checkpoints (emulator 0.23, 2026-11-26)
+
+`from-checkpoint` was run against a local devnet on the next version set:
+
+- **Versions:** rollups-node `feature/bump-emulator-v0.23.0` (emulator 0.23.0-test4), Dave v3.0.0-alpha.8-test1 contracts and an honest sling, the echo app (3 outputs per input).
+- **crisium:** a `crisium-sentinel` container (cartesi-machine 0.23.0). Its data volume was mounted `:ro` through `--volume`; root in the copying container gets "Read-only file system".
+- **Inputs:** 0-1 in epoch 1, 2-6 in epoch 2, 7-8 in epoch 3.
+- **Emulator:** the replay ran in the sentinel image with the entrypoint overridden.
+
+| Run | Start | Replayed | Result |
+|---|---|---|---|
+| `--to 4`, epoch 2 open | `epoch-1`, anchored by `EpochSealed(1)` | 0..4 | 5/5 hashes = node; declared root = recomputed after every input |
+| `--to 4 --unanchored-latest`, epoch 2 open | `epoch-2`, crisium only | 2..4 | start = node's hash after input 1; 3/3 hashes = node |
+| `--to 4`, epoch 2 sealed | `epoch-2`, anchored by `EpochSealed(2)` (the same state as the run above) | 2..4 | 3/3 = node |
+| `--to 8`, epoch 3 open, epoch 2 staged | `epoch-2`, anchored | 2..8 | 7/7 = node; epoch 2's end = `EpochStaged(2)` state and outputs root |
+| `--epoch 2`, epoch 3 sealed | `epoch-2`, anchored | 2..6 | 5/5 = node; epoch 2's end = `EpochStaged(2)` and `EpochSealed(3)` (state and outputs root) |
+
+Every run exited 0. Each took 4.4-7.2 s in all:
+
+- the read-only copy of a 550 MB checkpoint through a container: 1.3-3.6 s;
+- the replay, including the hash-tree rebuild and Docker start-up: 2.9-4.0 s;
+- events, inputs and the node: under 0.1 s.
+
+The negative paths are unit-tested with a fake CLI and chain (`tests/test_from_checkpoint.py`): a wrong checkpoint machine or output history (exit 4), a wrong declared root (exit 5), a node or staged state that differs (exit 2), an unanchored start that disagrees with `EpochStaged` (exit 4), a writable source, and an older emulator.
+
 ## Tests
 
 ```bash
