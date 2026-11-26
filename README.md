@@ -1,7 +1,5 @@
 # tycho-dig
 
-(Formerly `micronode`. The name comes from the same source as crisium: in "2001", the anomaly is dug up in the Tycho crater.)
-
 A Cartesi Machine with no node around it. You give it inputs and it prints the machine hash after each one. You can then compare those hashes with what a rollups-node recorded.
 
 The point is implementation diversity. tycho-dig does not take part in disputes. It is an independent check that can tell exactly which input made the node diverge. It is written in Python with the standard library only, and it drives the `cartesi-machine` CLI, by default through Docker.
