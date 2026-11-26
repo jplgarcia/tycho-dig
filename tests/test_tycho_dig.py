@@ -74,7 +74,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(result.inputs[1].hash_before, AFTER[0])
 
 
-# Machine hash after each input, as the rollups-node a13 recorded it for the tester app on a
+# Machine hash after each input, as rollups-node v2.0.0-alpha.13 recorded it for the tester app on a
 # live stack (cartesi_listInputs, 2026-11-05). tycho-dig run below matched all eight.
 TESTER_NODE = [
     ("rx-accepted", "0x660d8a75f21c7c9cf9a4fa94a704595b49c9306cdb2b389ad27fc505472a85d7"),
@@ -223,11 +223,11 @@ class CompareTest(NodeTestBase):
         self.assertIn("1 not yet processed", out)
 
 
-# --- RT-1: a guest that accepts input 1 with a fake outputs root (0x5a..5a) ----------------------
+# --- RT-18: a guest that accepts input 1 with a fake outputs root (0x5a..5a) ----------------------
 # Evidence of the red-team run of 2026-11-09 (outgen guest, emulator 0.21.0 in the rollups-node
-# a13 image): the outputs the machine emitted, the roots it declared, and the node's reason.
+# v2.0.0-alpha.13 image): the outputs the machine emitted, the roots it declared, and the node's reason.
 
-RT1 = FIXTURES / "rt1"
+RT18 = FIXTURES / "rt18"
 FAKES = Path(__file__).parent / "fakes"
 GOOD_ROOT_0 = "0x8b900f66313f1504e76e48ee76b885b87701275f8d79d3e49fdaf261f7328f8e"
 GOOD_ROOT_1 = "0xb2b72954d732ed70e622f4b388620239b2a97df685855b6c3c29588bcdcac2e6"
@@ -243,24 +243,24 @@ class OutputsRootTest(unittest.TestCase):
         for data in (b"", b"abc", bytes(range(256)) * 3):
             self.assertEqual(outputs.keccak256(data), outputs.keccak256_py(data))
 
-    def test_rt1_roots(self):
+    def test_rt18_roots(self):
         from tycho_dig.outputs import outputs_root
 
-        blobs = [(RT1 / "machine-wrong" / n).read_bytes() for n in RT1_OUTPUTS]
+        blobs = [(RT18 / "machine-wrong" / n).read_bytes() for n in RT1_OUTPUTS]
         self.assertEqual("0x" + outputs_root(blobs[:1]).hex(), GOOD_ROOT_0)
         self.assertEqual("0x" + outputs_root(blobs).hex(), GOOD_ROOT_1)
-        self.assertEqual("0x" + (RT1 / "machine-wrong" / "root-1.bin").read_bytes().hex(), BAD_ROOT)
-        self.assertEqual("0x" + (RT1 / "control" / "root-1.bin").read_bytes().hex(), GOOD_ROOT_1)
+        self.assertEqual("0x" + (RT18 / "machine-wrong" / "root-1.bin").read_bytes().hex(), BAD_ROOT)
+        self.assertEqual("0x" + (RT18 / "control" / "root-1.bin").read_bytes().hex(), GOOD_ROOT_1)
 
     def test_real_cli_run(self):
-        # tycho-dig run on the RT-1 inputs with the real 0.21.0 CLI (rollups-node a13 image), root
+        # tycho-dig run on the RT-18 inputs with the real 0.21.0 CLI (rollups-node v2.0.0-alpha.13 image), root
         # check off; the machine hashes are the ones the node recorded for app "root"
         from tycho_dig.machine import verify_outputs_roots
 
-        result = parse_run_log((RT1 / "machine-wrong" / "run-check-off.log").read_text())
+        result = parse_run_log((RT18 / "machine-wrong" / "run-check-off.log").read_text())
         for item in result.inputs:
-            item.outputs_merkle_root = "0x" + (RT1 / "machine-wrong" / f"root-{item.index}.bin").read_bytes().hex()
-        verify_outputs_roots(result, RT1 / "machine-wrong")
+            item.outputs_merkle_root = "0x" + (RT18 / "machine-wrong" / f"root-{item.index}.bin").read_bytes().hex()
+        verify_outputs_roots(result, RT18 / "machine-wrong")
         self.assertEqual(result.initial_hash, "0xbc2ff7bd4e6f46db9525a517e3f1dcb171e4da93e69dd777423086e1a486c85f")
         self.assertEqual(
             [i.hash_after for i in result.inputs],
@@ -272,12 +272,12 @@ class OutputsRootTest(unittest.TestCase):
         self.assertIn("Shutdown JSONRPC remote cartesi machine", result.log)
 
     def test_cli_assertion_is_parsed(self):
-        result = parse_run_log((RT1 / "machine-wrong" / "cli-check-true-tail.log").read_text())
+        result = parse_run_log((RT18 / "machine-wrong" / "cli-check-true-tail.log").read_text())
         self.assertEqual(result.cli_root_check_stop, 1)
 
 
 class FakeCliRun(unittest.TestCase):
-    """machine.run against a fake CLI that replays the RT-1 run's files."""
+    """machine.run against a fake CLI that replays the RT-18 run's files."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -287,7 +287,7 @@ class FakeCliRun(unittest.TestCase):
         self.bin.mkdir()
         self.work.mkdir()
         for name in ("input-0.bin", "input-1.bin"):
-            (self.work / name).write_bytes((RT1 / "machine-wrong" / name).read_bytes())
+            (self.work / name).write_bytes((RT18 / "machine-wrong" / name).read_bytes())
         for tool, mode in (("cartesi-machine", "cli"), ("docker", "docker")):
             path = self.bin / tool
             path.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKES / "fake_cli.py"}" {mode} "$@"\n')
@@ -295,8 +295,8 @@ class FakeCliRun(unittest.TestCase):
         self.pidfile, self.docker_log = tmp / "server.pid", tmp / "docker.log"
         self.env = {
             "PATH": f"{self.bin}:{os.environ['PATH']}",
-            "FAKE_OUTPUTS": str(RT1 / "machine-wrong"),
-            "FAKE_ROOTS": str(RT1 / "machine-wrong"),
+            "FAKE_OUTPUTS": str(RT18 / "machine-wrong"),
+            "FAKE_ROOTS": str(RT18 / "machine-wrong"),
             "FAKE_CAPS": "check_option,remote_shutdown",
             "FAKE_PIDFILE": str(self.pidfile),
             "FAKE_DOCKER_LOG": str(self.docker_log),
@@ -349,7 +349,7 @@ class FakeCliRun(unittest.TestCase):
         self.assertEqual(run["outputs_root_mismatches"], [1])
 
     def test_control_is_clean(self):
-        code, out = self._cmd_run(FAKE_ROOTS=str(RT1 / "control"))
+        code, out = self._cmd_run(FAKE_ROOTS=str(RT18 / "control"))
         self.assertEqual(code, 0, out)
         self.assertNotIn("MISMATCH", out)
 
@@ -378,7 +378,7 @@ class FakeCliRun(unittest.TestCase):
         self.assertFalse((self.work / "out-5-7.bin").exists())
 
 
-def _rt1_inputs(root_1):
+def _rt18_inputs(root_1):
     return [
         {"index": 0, "hash_after": AFTER[0], "outcome": "rx-accepted", "outputs_merkle_root": GOOD_ROOT_0,
          "independent_outputs_root": GOOD_ROOT_0, "output_count": 1},
@@ -387,22 +387,22 @@ def _rt1_inputs(root_1):
     ]
 
 
-RT1_EPOCHS = {1: {"index": "0x1", "input_index_lower_bound": "0x0", "input_index_upper_bound": "0x2"}}
+RT18_EPOCHS = {1: {"index": "0x1", "input_index_lower_bound": "0x0", "input_index_upper_bound": "0x2"}}
 
 
 class OutputsRootCrossCheckTest(NodeTestBase):
     """Diego's cross-check against the node's INVALID_OUTPUTS_ROOT reason."""
 
     def _node_app(self, declared, calculated):
-        app = json.loads((RT1 / "node-getApplication.json").read_text())["result"]["data"]
+        app = json.loads((RT18 / "node-getApplication.json").read_text())["result"]["data"]
         reason = app["reason"]
         app["reason"] = reason.replace(BAD_ROOT, declared).replace(GOOD_ROOT_1, calculated)
         return app
 
     def test_machine_wrong_live_evidence(self):
-        # the node's own reason from the RT-1 run: declared 0x5a.., calculated 0xb2b7..
+        # the node's own reason from the RT-18 run: declared 0x5a.., calculated 0xb2b7..
         code, out = self._compare(AFTER[:2], app=self._node_app(BAD_ROOT, GOOD_ROOT_1),
-                                  inputs=_rt1_inputs(BAD_ROOT), epochs=RT1_EPOCHS)
+                                  inputs=_rt18_inputs(BAD_ROOT), epochs=RT18_EPOCHS)
         self.assertEqual(code, cli.MACHINE_WRONG, out)
         self.assertIn("VERDICT: MACHINE WRONG", out)
         self.assertIn("OUTPUTS ROOT MISMATCH (machine wrong): input 1", out)
@@ -411,20 +411,20 @@ class OutputsRootCrossCheckTest(NodeTestBase):
     def test_node_wrong_simulated(self):
         # the machine's root is right; a node that dropped the last output calculates another
         code, out = self._compare(AFTER[:2], app=self._node_app(GOOD_ROOT_1, BUGGY_NODE_ROOT),
-                                  inputs=_rt1_inputs(GOOD_ROOT_1), epochs=RT1_EPOCHS)
+                                  inputs=_rt18_inputs(GOOD_ROOT_1), epochs=RT18_EPOCHS)
         self.assertEqual(code, cli.NODE_WRONG, out)
         self.assertIn("VERDICT: NODE WRONG", out)
         self.assertNotIn("machine wrong", out)
 
     def test_machine_wrong_without_node_flag(self):
         # the node has not closed the epoch yet: tycho-dig alone already knows
-        code, out = self._compare(AFTER[:2], inputs=_rt1_inputs(BAD_ROOT))
+        code, out = self._compare(AFTER[:2], inputs=_rt18_inputs(BAD_ROOT))
         self.assertEqual(code, cli.MACHINE_WRONG, out)
         self.assertNotIn("VERDICT", out)
 
     def test_cannot_decide_before_replaying_the_epoch(self):
         code, out = self._compare(AFTER[:1], app=self._node_app(BAD_ROOT, GOOD_ROOT_1),
-                                  inputs=_rt1_inputs(GOOD_ROOT_1)[:1], epochs=RT1_EPOCHS)
+                                  inputs=_rt18_inputs(GOOD_ROOT_1)[:1], epochs=RT18_EPOCHS)
         self.assertIn("cannot cross-check epoch 1 yet", out)
         self.assertEqual(code, 3, out)
 

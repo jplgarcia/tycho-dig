@@ -2,14 +2,14 @@
 
 The guest (libcmt) keeps its own outputs tree and writes the root into the TX buffer when it
 accepts an input. Recomputing that root from the outputs the machine actually emitted tells a
-machine that declared a wrong root (RT-1) apart from a node that computed it wrongly. This is
+machine that declared a wrong root (RT-18) apart from a node that computed it wrongly. This is
 the cross-check Diego proposed: if our root agrees with the node, the machine is wrong; if it
 agrees with the machine, the node is wrong.
 
 The tree follows libcmt's merkle.c (machine-guest-tools v0.18.0) and the CLI's host-side check:
 height 63 (ROLLUP_LOG2_MAX_OUTPUT_COUNT), leaf = keccak256(output), pristine leaf = 32 zero
 bytes. It spans every accepted output since genesis, not only the current epoch. The keccak256
-fallback is the standard-library one from the RT-1 evidence tool (outputs-root-crosscheck.py).
+fallback is the standard-library one from the RT-18 evidence tool (outputs-root-crosscheck.py).
 """
 
 from __future__ import annotations

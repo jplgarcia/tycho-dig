@@ -1,6 +1,6 @@
 """A stand-in for `cartesi-machine` (and for `docker run` around it) in the unit tests.
 
-It replays the RT-1 run (outgen guest, inputs "notices 1 8" and "notices 2 8 badroot"): it
+It replays the RT-18 run (outgen guest, inputs "notices 1 8" and "notices 2 8 badroot"): it
 copies that run's output and root files into the working directory and prints the CLI's
 log lines for them. The machine hashes are placeholders; the files are the evidence's.
 

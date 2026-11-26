@@ -221,7 +221,7 @@ Both checks are stateless, so `check` can run from cron or a loop without keepin
 
 ### Outputs root
 
-When the guest accepts an input, it writes the root of its outputs Merkle tree into the TX buffer. The tree holds every accepted output since genesis, and it is what the epoch's claim settles on-chain. A guest that writes the wrong root makes every output of that epoch unprovable (red-team item RT-1).
+When the guest accepts an input, it writes the root of its outputs Merkle tree into the TX buffer. The tree holds every accepted output since genesis, and it is what the epoch's claim settles on-chain. A guest that writes the wrong root makes every output of that epoch unprovable (red-team item RT-18).
 
 `run` recomputes the root itself after every accepted input, from the outputs the machine emitted. Its tree follows libcmt: height 63, leaf `keccak256(output)`. It then compares that root with the one the machine declared. A mismatch prints `OUTPUTS ROOT MISMATCH (machine wrong)` with the input, the declared root, and the recomputed root.
 
@@ -309,7 +309,7 @@ With `EVERY_INPUT`, the advancer could not write the snapshot, because the test 
 
 After recovery, `check` exits with 0 again.
 
-### Outputs root mismatch (RT-1, 2026-11-09)
+### Outputs root mismatch (RT-18, 2026-11-09)
 
 A test guest emitted its notices, then accepted input 1 with `0x5a...5a` in the TX buffer instead of its outputs root. The run used rollups-node `v2.0.0-alpha.13` and the `cartesi-machine` 0.21.0 from the node image. The node marked the app `INVALID_OUTPUTS_ROOT` when epoch 1 closed.
 
